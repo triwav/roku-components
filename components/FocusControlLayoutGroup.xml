@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="FocusControlLayoutGroup" extends="LayoutGroup">
+  <script type="text/brightscript" uri="FocusControlLayoutGroup.brs" />
+
+  <interface>
+    <!-- INPUTS -->
+
+    <!-- Used to specify the child index you would like to be focused -->
+    <field id="jumpToIndex" type="integer" value="-1" alwaysNotify="true" />
+
+    <!-- OUTPUTS -->
+
+    <!-- Child index of the currently focused node -->
+    <field id="focusedIndex" type="integer" value="-1" />
+
+    <!-- Node that is gaining focus. NOTE DO NOT OBSERVE THIS FIELD! Observe focusedIndex instead -->
+    <field id="componentGainingFocus" type="node" />
+
+    <!-- Node that is loosing focus. NOTE DO NOT OBSERVE THIS FIELD! Observe focusedIndex instead -->
+    <field id="componentLosingFocus" type="node" />
+  </interface>
+</component>
