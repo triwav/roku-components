@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<component name="FocusControlLayoutGroup" extends="LayoutGroup">
-  <script type="text/brightscript" uri="FocusControlLayoutGroup.brs" />
+<component name="FocusControlGroup" extends="Group">
+  <script type="text/brightscript" uri="FocusControlGroup.brs" />
 
   <interface>
     <!-- INPUTS -->
+
+    <!--  Used to let us know which direction nodes are positioned in.
+          For example if childDirection is vertical and we are focused on child index 0 when the down key is pressed we know to focus on child index 1.
+          Likewise if childDirection is horizontal and we are focused on child index 0 when the right key is pressed we know to focus on child index 1.
+    -->
+    <field id="childDirection" type="string" value="vert" />
 
     <!-- Used to specify the child index you would like to be focused -->
     <field id="jumpToIndex" type="integer" value="-1" alwaysNotify="true" />
