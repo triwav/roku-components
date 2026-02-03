@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="OpenGridItem" extends="Group">
+	<script type="text/brightscript" uri="OpenGridItem.brs" />
+	<interface>
+		<field id="rowIndex" type="integer" />
+		<field id="index" type="integer" />
+		<field id="content" type="node" />
+
+		<field id="width" alias="label.width, rect.width" value="200" />
+		<field id="height" alias="label.height, rect.height" value="40" />
+	</interface>
+	<children>
+		<Rectangle id="rect" visible="false" color="#FF0000" />
+		<Label id="label" horizAlign="center" translation="[0, 10]" />
+
+	</children>
+</component>

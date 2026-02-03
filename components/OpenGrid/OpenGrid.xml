@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="OpenGrid" extends="Group">
+	<script type="text/brightscript" uri="OpenGrid.brs" />
+
+	<interface>
+		<field id="jumpToRowItem" type="array" value="[0, 0]" />
+
+		<field id="composition" type="node" />
+		<field id="width" type="integer" value="1920" />
+		<field id="height" type="integer" value="1080" />
+		<field id="focusYOffset" type="integer" value="100" />
+		<field id="focusBitmapUri" alias="focusFeedback.uri" />
+	</interface>
+	<children>
+		<Group id="gridContent" />
+		<Poster id="focusFeedback" focusable="false" />
+	</children>
+</component>
