@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="GridItemRenderer" extends="Group">
+	<script type="text/brightscript" uri="GridItemRenderer.brs" />
+	<interface>
+		<!-- Input fields -->
+		<field id="content" type="assocarray" />
+		<field id="contentUpdated" type="boolean" alwaysNotify="true" />
+
+		<!-- Output fields -->
+		<field id="width" alias="poster.width, label.width" />
+		<field id="height" alias="poster.height" />
+
+		<field id="xOffset" type="float" />
+		<field id="yOffset" type="float" />
+	</interface>
+
+	<children>
+		<LayoutGroup id="layout" itemSpacings="[6]">
+			<Poster id="poster" />
+			<Label id="label" />
+		</LayoutGroup>
+	</children>
+</component>

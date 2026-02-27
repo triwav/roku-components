@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="CustomRowHeader" extends="Group">
+	<script type="text/brightscript" uri="CustomRowHeader.brs" />
+	<interface>
+		<!-- Input fields -->
+		<field id="content" type="assocarray" />
+		<field id="contentUpdated" type="boolean" alwaysNotify="true" />
+
+		<!-- Output fields -->
+		<field id="height" type="integer" value="27" />
+	</interface>
+
+	<children>
+		<Label id="label" />
+		<!-- <Rectangle id="rect" width="20" height="27" color="#FF0000" translation="[-20,0]" /> -->
+	</children>
+</component>

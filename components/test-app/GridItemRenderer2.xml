@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="GridItemRenderer2" extends="Group">
+	<script type="text/brightscript" uri="GridItemRenderer.brs" />
+	<interface>
+		<!-- Input fields -->
+		<field id="content" type="assocarray" />
+		<field id="contentUpdated" type="boolean" alwaysNotify="true" />
+
+		<!-- Output fields -->
+		<field id="height" type="integer" value="40" />
+		<field id="xOffset" type="float" value="200" />
+	</interface>
+
+	<children>
+		<Label id="label" text="GridItemRenderer2" />
+	</children>
+</component>

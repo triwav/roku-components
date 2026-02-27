@@ -3,13 +3,20 @@
 	<script type="text/brightscript" uri="OpenGrid.brs" />
 
 	<interface>
+	<!-- TODO fix me-->
+		<field id="contentNeeded" type="bool" />
+		<field id="contentSuppliedQueueId" type="string" />
+
 		<field id="jumpToRowItem" type="array" value="[0, 0]" />
 
-		<field id="composition" type="node" />
+		<!-- Note this is an output field not an input -->
+		<!-- <field id="content" type="node" /> -->
 		<field id="width" type="integer" value="1920" />
 		<field id="height" type="integer" value="1080" />
 		<field id="focusYOffset" type="integer" value="100" />
 		<field id="focusBitmapUri" alias="focusFeedback.uri" />
+
+		<field id="loadedRowsRef" type="assocarray" />
 	</interface>
 	<children>
 		<Group id="gridContent" />
