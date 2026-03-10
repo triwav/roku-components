@@ -5,4 +5,6 @@ build_version=0
 
 rsg_version=1.2
 
+ui_resolutions=hd
+
 uri_resolution_autosub={resolution},sd,hd,fhd

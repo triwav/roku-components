@@ -11,15 +11,16 @@
 
 		<!-- Note this is an output field not an input -->
 		<!-- <field id="content" type="node" /> -->
-		<field id="width" type="integer" value="1920" />
-		<field id="height" type="integer" value="1080" />
-		<field id="focusYOffset" type="integer" value="100" />
+		<field id="width" type="integer" />
+		<field id="height" type="integer" />
+		<field id="focusXOffset" type="integer" />
+		<field id="focusYOffset" type="integer" />
 		<field id="focusBitmapUri" alias="focusFeedback.uri" />
 
-		<field id="loadedRowsRef" type="assocarray" />
+		<field id="renderedRowsRef" type="assocarray" />
 	</interface>
 	<children>
-		<Group id="gridContent" />
-		<Poster id="focusFeedback" focusable="false" />
+		<Group id="gridVerticalScroll" />
+		<Poster id="focusFeedback" focusable="false" visible="false" />
 	</children>
 </component>

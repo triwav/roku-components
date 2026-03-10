@@ -4,10 +4,10 @@
 	<children>
 		<OpenGrid
 			id="grid"
-			width="1920"
-			height="1080"
+			focusXOffset="90"
+			focusYOffset="90"
 			focusBitmapUri="pkg:/images/focus-feedback-{resolution}.9.png"
-			translation="[90, 90]" />
+			translation="[0, 0]" />
 
 	</children>
 </component>

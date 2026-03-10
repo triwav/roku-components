@@ -5,9 +5,11 @@
 		<!-- Input fields -->
 		<field id="content" type="assocarray" />
 		<field id="contentUpdated" type="boolean" alwaysNotify="true" />
+		<field id="rowIndex" type="integer" />
+		<field id="rowItemIndex" type="integer" />
 
 		<!-- Output fields -->
-		<field id="width" alias="poster.width, label.width" />
+		<field id="width" alias="poster.width, rect.width, label.width" />
 		<field id="height" alias="poster.height" />
 
 		<field id="xOffset" type="float" />
@@ -15,9 +17,11 @@
 	</interface>
 
 	<children>
-		<LayoutGroup id="layout" itemSpacings="[6]">
+		<LayoutGroup id="layout" itemSpacings="[0]">
 			<Poster id="poster" />
-			<Label id="label" />
+			<Rectangle id="rect" height="24" color="#000000">
+				<Label id="label" translation="[0, 6]" />
+			</Rectangle>
 		</LayoutGroup>
 	</children>
 </component>

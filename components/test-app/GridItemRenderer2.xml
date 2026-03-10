@@ -5,13 +5,21 @@
 		<!-- Input fields -->
 		<field id="content" type="assocarray" />
 		<field id="contentUpdated" type="boolean" alwaysNotify="true" />
+		<field id="rowIndex" type="integer" />
+		<field id="rowItemIndex" type="integer" />
 
 		<!-- Output fields -->
-		<field id="height" type="integer" value="40" />
-		<field id="xOffset" type="float" value="200" />
+		<field id="width" alias="poster.width,  label.width" />
+		<field id="height" alias="poster.height" />
+
+		<field id="xOffset" type="float" />
+		<field id="yOffset" type="float" />
 	</interface>
 
 	<children>
-		<Label id="label" text="GridItemRenderer2" />
+		<LayoutGroup id="layout" itemSpacings="[6]">
+			<Poster id="poster" />
+			<Label id="label" />
+		</LayoutGroup>
 	</children>
 </component>

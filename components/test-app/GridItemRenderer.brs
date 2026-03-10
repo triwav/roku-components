@@ -14,11 +14,19 @@ sub onContentUpdated()
 
 	content = m.top.getRef("content")
 
-	m.poster.uri = content.imageUrl
+	if m.top.subtype() = "GridItemRenderer" then
+		imageWidth = 160
+		imageHeight = 240
+	else
+		imageWidth = 427
+		imageHeight = 240
+	end if
+
+	m.poster.uri = content.imageUrl + "/" + imageWidth.toStr() + "/" + imageHeight.toStr()
 	m.label.text = content.title
 
-	m.top.width = 210
-	m.top.height = 300
-	m.top.xOffset = 210 + 20
-	m.top.yOffset = 300 + 48
+	m.top.width = imageWidth
+	m.top.height = imageHeight
+	m.top.xOffset = imageWidth + 20
+	m.top.yOffset = imageHeight + 48
 end sub
