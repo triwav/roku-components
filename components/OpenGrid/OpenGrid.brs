@@ -1,38 +1,56 @@
 sub init()
+	currentDesignResolution = m.top.getScene().currentDesignResolution
+	m.width = currentDesignResolution.width
+	m.height = currentDesignResolution.height
+
+	' TODO need to add observer for this so it can be changed
+	m.top.width = m.width
+	m.top.height = m.height
+
+	' How much extra we want to render to the left and right of the onscreen content for the focused row
+	m.extraWidthToRenderFocusedRow = m.width * 0.5
+
+	' How much extra we want to render to the left and right of the onscreen content for the non-focused rows
+	m.extraWidthToRenderNonFocusedRow = 0
+
+	' How much extra we want to render above and below the onscreen content for all rows
+	m.extraHeightToRender = m.height * 0.5
+
+	' Variable default setup
+	m.currentRowIndex = 0
+
+	' Map of last-focused item index per row (keyed by row index)
+	m.lastFocusedItemIndexByRow = []
+
+	m.focusXOffset = 0
+	m.focusYOffset = 0
+
+	' The actual content for the grid, an array of row configs where each row config has an array of item configs
+	m.gridContent = []
+	' IMPROVEMENT perhaps remove grid prefix from these variable names to make it less verbose
+
+	' The nodes for each row that are currently in the grid, indexed by row index
+	m.gridRowNodes = []
+
+	m.gridRowHeaderNodes = []
+
+	' We need to access the item containers quite often so we store them here after they are made
+	m.gridRowItemsContainerNodes = []
+
+	' key is row index as string
+	m.renderedRows = {}
+
+	m.availableRecycledNodes = {}
+
 	m.renderThreadQueue = createObject("roRenderThreadQueue")
 	contentSuppliedQueueId = "OGContentSuppliedQueue:" + createObject("roDeviceInfo").getRandomUUID()
 
 	m.renderThreadQueue.addMessageHandler(contentSuppliedQueueId, "onContentSuppliedMessageReceived")
 	m.top.contentSuppliedQueueId = contentSuppliedQueueId
 
-	' Variable default setup
-	m.currentRowIndex = 0
-	m.focusXOffset = 0
-	m.focusYOffset = 0
-
-	' Map of last-focused item index per row (keyed by row index)
-	m.lastFocusedItemIndexByRow = []
-	m.gridContent = []
 
 	m.gridVerticalScroll = m.top.findNode("gridVerticalScroll")
 	m.focusFeedback = m.top.findNode("focusFeedback")
-
-	' key is row index as string
-	m.renderedRows = {}
-
-	m.gridRowNodes = []
-
-	m.availableRecycledNodes = {}
-
-	currentDesignResolution = m.top.getScene().currentDesignResolution
-	' TODO need to add observer for this
-	m.top.width = currentDesignResolution.width
-	m.top.height = currentDesignResolution.height
-
-	m.renderMultiplier = 1.0
-
-	m.widthToRender = currentDesignResolution.width * m.renderMultiplier
-	m.heightToRender = currentDesignResolution.height * m.renderMultiplier
 
 	' Have to delay load probably due to weird main bug
 	m.timer = createObject("roSGNode", "Timer")
@@ -40,6 +58,11 @@ sub init()
 	m.timer.observeField("fire", "onTimerFired")
 	m.timer.control = "start"
 
+	' Used to allow us to stop creating nodes while we are animating and to also avoid time outs
+	m.offscreenNodesTimer = createObject("roSGNode", "Timer")
+	m.offscreenNodesTimer.duration = 0.01
+	m.offscreenNodesTimer.observeFieldScoped("fire", "onOffscreenNodesTimerFired")
+	m.offscreenNodesTimer.control = "start"
 
 	m.top.observeFieldScoped("focusXOffset", "onFocusXOffsetChanged")
 	m.top.observeFieldScoped("focusYOffset", "onFocusYOffsetChanged")
@@ -82,7 +105,9 @@ end function
 
 
 ' Creates nodes that are needed for content around the focused index.
-sub createOnscreenNodes(focusedRowIndex as integer)
+sub createOnscreenNodes(focusedRowIndex as integer, focusedRowItemIndex as integer)
+	' FIXME Add optimization to only try to create nodes for the row that changed
+
 	if focusedRowIndex < 0 then
 		print "Focused row index is out of bounds: " focusedRowIndex
 		return
@@ -91,7 +116,7 @@ sub createOnscreenNodes(focusedRowIndex as integer)
 	currentRowIndex = focusedRowIndex
 	heightRendered = 0
 	' Go forward from the focused index
-	while m.heightToRender > heightRendered AND currentRowIndex < m.gridContent.count()
+	while m.height + m.extraHeightToRender - m.focusYOffset > heightRendered AND currentRowIndex < m.gridContent.count()
 		currentRowConfig = m.gridContent[currentRowIndex]
 
 		rowRenderedNodes = m.renderedRows[currentRowIndex.toStr()]
@@ -167,10 +192,22 @@ sub createOnscreenNodes(focusedRowIndex as integer)
 
 		yOffset = 0
 		currentRowWidthRendered = 0
-		currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex]
-		reverseRowItemIndex = currentRowItemIndex - 1
-		while currentRowWidthRendered < m.widthToRender AND currentRowItemIndex < currentRowConfig.items.count()
-			' print "currentRowWidthRendered" currentRowWidthRendered " m.widthToRender: " m.widthToRender
+
+		if focusedRowIndex = currentRowIndex then
+			currentRowItemIndex = focusedRowItemIndex
+		else
+			currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex]
+		end if
+
+		while currentRowWidthRendered < m.width - m.focusXOffset AND currentRowItemIndex < currentRowConfig.items.count()
+			' See if we already made this node
+			if rowRenderedNodes[currentRowItemIndex.toStr()] <> invalid then
+				print "Node already rendered for row " currentRowIndex " item " currentRowItemIndex
+				currentRowItemIndex = currentRowItemIndex + 1
+				continue while
+			end if
+
+			print "currentRowIndex" currentRowIndex "currentRowItemIndex" currentRowItemIndex "currentRowWidthRendered" currentRowWidthRendered " m.width: " m.width "m.focusXOffset " m.focusXOffset
 			rowItemNode = createNodeAndAssignContent(currentRowIndex, currentRowItemIndex)
 
 			if rowItemNode <> invalid then
@@ -183,8 +220,16 @@ sub createOnscreenNodes(focusedRowIndex as integer)
 				translationX = 0
 				if currentRowItemIndex <> 0
 					previousRowItemNode = rowRenderedNodes[(currentRowItemIndex - 1).toStr()]
-					translationX = previousRowItemNode.translation[0] + previousRowItemNode.xOffset
-					rowItemNode.translation = [translationX, 0]
+					if previousRowItemNode = invalid then
+						' We get in this case when scrolling back left so we need to take our translation from the right item instead of the left
+						nextNode = rowRenderedNodes[(currentRowItemIndex + 1).toStr()]
+						translationX = nextNode.translation[0] - rowItemNode.xOffset
+
+						rowItemNode.translation = [translationX, 0]
+					else
+						translationX = previousRowItemNode.translation[0] + previousRowItemNode.xOffset
+						rowItemNode.translation = [translationX, 0]
+					end if
 				end if
 
 				rowItemContainerNode.appendChild(rowItemNode)
@@ -195,6 +240,80 @@ sub createOnscreenNodes(focusedRowIndex as integer)
 			end if
 		end while
 
+		' If we have a focusXOffset then we want to add one more before the focused row item if it does not already exist to keep the peek
+		if m.focusXOffset > 0 AND focusedRowItemIndex > 0 then
+			previousRowItemIndex = focusedRowItemIndex - 1
+			if rowRenderedNodes[previousRowItemIndex.toStr()] = invalid then
+				rowItemNode = createNodeAndAssignContent(currentRowIndex, previousRowItemIndex)
+
+				focusedRowItem = rowRenderedNodes[(focusedRowItemIndex).toStr()]
+				translationX = focusedRowItem.translation[0] - rowItemNode.xOffset
+
+				rowItemNode.translation = [translationX, 0]
+
+				rowItemContainerNode.insertChild(rowItemNode, 0)
+			end if
+		end if
+
+		' Same thing for focusYOffset but for the whole row
+		if m.focusYOffset > 0 AND focusedRowIndex > 0 then
+			previousRowIndex = focusedRowIndex - 1
+
+			currentRowItemIndex = m.lastFocusedItemIndexByRow[previousRowIndex]
+
+			rowRenderedNodes = m.renderedRows[previousRowIndex.toStr()]
+			if rowRenderedNodes = invalid OR rowRenderedNodes.count() = 0 then
+				rowRenderedNodes = {}
+				m.renderedRows[previousRowIndex.toStr()] = rowRenderedNodes
+
+				' TODO figure out how to avoid duplication
+
+				while currentRowWidthRendered < m.width - m.focusXOffset AND currentRowItemIndex < currentRowConfig.items.count()
+					' See if we already made this node
+					if rowRenderedNodes[currentRowItemIndex.toStr()] <> invalid then
+						print "Node already rendered for row " currentRowIndex " item " currentRowItemIndex
+						currentRowItemIndex = currentRowItemIndex + 1
+						continue while
+					end if
+
+					print "currentRowIndex" currentRowIndex "currentRowItemIndex" currentRowItemIndex "currentRowWidthRendered" currentRowWidthRendered " m.width: " m.width "m.focusXOffset " m.focusXOffset
+					rowItemNode = createNodeAndAssignContent(currentRowIndex, currentRowItemIndex)
+
+					if rowItemNode <> invalid then
+						if yOffset = 0 then
+							if rowItemNode.hasField("yOffset") then
+								yOffset = rowItemNode.yOffset
+							end if
+						end if
+
+						translationX = 0
+						if currentRowItemIndex <> 0
+							previousRowItemNode = rowRenderedNodes[(currentRowItemIndex - 1).toStr()]
+							if previousRowItemNode = invalid then
+								' We get in this case when scrolling back left so we need to take our translation from the right item instead of the left
+								nextNode = rowRenderedNodes[(currentRowItemIndex + 1).toStr()]
+								translationX = nextNode.translation[0] - rowItemNode.xOffset
+
+								rowItemNode.translation = [translationX, 0]
+							else
+								translationX = previousRowItemNode.translation[0] + previousRowItemNode.xOffset
+								rowItemNode.translation = [translationX, 0]
+							end if
+						end if
+
+						rowItemContainerNode.appendChild(rowItemNode)
+
+						xOffset = rowItemNode.xOffset
+						currentRowWidthRendered += xOffset
+						currentRowItemIndex = currentRowItemIndex + 1
+					end if
+				end while
+			else
+				print "Row " previousRowIndex " already rendered" rowRenderedNodes.count()
+			end if
+		end if
+
+
 		rowNode.headerHeight = headerHeight
 		rowNode.yOffset = yOffset + headerHeight
 		heightRendered += yOffset + headerHeight
@@ -202,7 +321,114 @@ sub createOnscreenNodes(focusedRowIndex as integer)
 	end while
 
 	' Now go backward from the focused index to render content above the focused row
+	currentRowIndex = focusedRowIndex - 1
+	heightRendered = 0
+	' while m.extraHeightToRender + m.focusYOffset > heightRendered AND currentRowIndex >= 0
+
+	' 	yOffset = 0
+	' 	currentRowWidthRendered = 0
+	' 	currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex]
+	' 	reverseRowItemIndex = currentRowItemIndex - 1
+	' 	while currentRowWidthRendered < m.width - m.focusXOffset AND currentRowItemIndex >= 0
+	' 	end while
+	' end while
 end sub
+
+
+sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemIndex as Integer)
+	m.gridRowItemsContainerNodes[rowIndex] = createObject("roSGNode", "Group")
+
+end sub
+
+
+sub recycleOffscreenNodes()
+	' Shallow clone so we can have different policies based on the row
+	renderedRows = m.renderedRows
+
+	' Next handle other rows
+	for each rowIndex in renderedRows
+		' First check if this is outside the vertical render area, if it is then we can recycle the entire row without needing to check each individual item
+		translationDifference = calculateRowVerticalTranslationDifference(rowIndex.toInt())
+		if translationDifference > m.height - m.focusYOffset + m.extraHeightToRender OR translationDifference + m.focusYOffset < -m.extraHeightToRender then
+			print "Recycling entire row " rowIndex " with vertical translation difference of " translationDifference
+
+			' Recycle entire row
+			for each rowItemIndex in renderedRows[rowIndex]
+				recycleNode(rowIndex, rowItemIndex)
+			end for
+
+			renderedRows.delete(rowIndex)
+
+			continue for
+		end if
+
+		' Now handle rendered rows that are within the vertical render area but may have items that are outside the horizontal render area
+
+		' Check if this is the currently focused row as we may want to have different horizontal render area thresholds for the focused row vs the non-focused rows
+
+		if rowIndex.toInt() = m.currentRowIndex then
+			' Focused row, use focused row render area thresholds
+			print "Checking horizontal thresholds for focused row " rowIndex
+
+			for each rowItemIndex in renderedRows[rowIndex]
+				rowItemNode = renderedRows[rowIndex][rowItemIndex]
+
+				translationDifference = calculateHorizontalTranslationDifference(rowItemNode, rowItemIndex)
+				if translationDifference > m.width - m.focusXOffset + m.extraWidthToRenderFocusedRow OR translationDifference + rowItemNode.width < -m.focusXOffset - m.extraWidthToRenderFocusedRow then
+					recycleNode(rowIndex, rowItemIndex)
+				end if
+			end for
+		else
+			' Non-focused row, use non-focused row render area thresholds
+			print "Checking horizontal thresholds for non-focused row " rowIndex
+
+			for each rowItemIndex in renderedRows[rowIndex]
+				rowItemNode = renderedRows[rowIndex][rowItemIndex]
+
+				translationDifference = calculateHorizontalTranslationDifference(rowItemNode, rowItemIndex)
+				if translationDifference > m.width - m.focusXOffset + m.extraWidthToRenderNonFocusedRow OR translationDifference + rowItemNode.width < -m.focusXOffset - m.extraWidthToRenderNonFocusedRow then
+					recycleNode(rowIndex, rowItemIndex)
+				end if
+			end for
+		end if
+	end for
+end sub
+
+
+sub recycleNode(rowIndex as String, rowItemIndex as String)
+	print "Recycling node for row " rowIndex " item " rowItemIndex
+	renderedRows = m.renderedRows
+	rowItemNode = renderedRows[rowIndex.toStr()][rowItemIndex.toStr()]
+
+	nodeTypeAvailableRecycledNodes = m.availableRecycledNodes[rowItemNode.subtype()]
+	if nodeTypeAvailableRecycledNodes = invalid then
+		nodeTypeAvailableRecycledNodes = []
+		m.availableRecycledNodes[rowItemNode.subtype()] = nodeTypeAvailableRecycledNodes
+	end if
+	nodeTypeAvailableRecycledNodes.push(rowItemNode)
+
+	renderedRows[rowIndex].delete(rowItemIndex)
+
+	m.gridContent[rowIndex.toInt()].items[rowItemIndex.toInt()].contentAssigned = false
+
+	rowItemContainerNode = rowItemNode.getParent()
+	rowItemContainerNode.removeChild(rowItemNode)
+end sub
+
+
+sub onOffscreenNodesTimerFired()
+	' If we successfully made a node then start the timer again to keep making nodes until we have rendered everything within the render area, if we did not successfully make a node then that means we have rendered everything we can for the current render area
+	if createOffscreenNode() then
+		m.offscreenNodesTimer.control = "start"
+	end if
+end sub
+
+
+' Tries to create an offscreen node if one has not been rendered yet
+function createOffscreenNode() as Boolean
+	return true
+
+end function
 
 
 function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer)
@@ -259,39 +485,27 @@ function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer
 end function
 
 
-sub recycleOffscreenNodes()
-	renderedRows = m.renderedRows
-	for each rowIndex in renderedRows
-		rowXTranslation = invalid
-		for each rowItemIndex in renderedRows[rowIndex]
-			rowItemNode = renderedRows[rowIndex][rowItemIndex]
+' Calculates the horizontal distance from the currently focused node to this node
+function calculateHorizontalTranslationDifference(rowItemNode, rowItemIndex as String) as Float
+	rowItemContainerNode = rowItemNode.getParent()
+	rowXTranslation = rowItemContainerNode.translation[0]
 
-			if rowXTranslation = invalid then
-				rowItemContainerNode = rowItemNode.getParent()
-				rowXTranslation = rowItemContainerNode.translation[0]
-			end if
+	rowItemXTranslation = rowItemNode.translation[0]
 
-			rowItemXTranslation = rowItemNode.translation[0]
-			print rowIndex ":" rowItemIndex " rowItemXTranslation: " rowItemXTranslation
-			print "rowXTranslation: " rowXTranslation " m.widthToRender: " m.widthToRender
-			' rowXTranslation is negative so we add to get the difference
-			translationDifference = rowItemXTranslation + rowXTranslation
-			print "translationDifference" translationDifference
-			if translationDifference > m.widthToRender OR translationDifference + rowItemNode.width < -m.focusXOffset then
-				print "Recycling node for row " rowIndex " item " rowItemIndex
-				renderedRows[rowIndex].delete(rowItemIndex)
-				rowItemContainerNode.removeChild(rowItemNode)
-				nodeTypeAvailableRecycledNodes = m.availableRecycledNodes[rowItemNode.subtype()]
-				if nodeTypeAvailableRecycledNodes = invalid then
-					nodeTypeAvailableRecycledNodes = []
-					m.availableRecycledNodes[rowItemNode.subtype()] = nodeTypeAvailableRecycledNodes
-				end if
-				nodeTypeAvailableRecycledNodes.push(rowItemNode)
-				m.gridContent[rowIndex.toInt()].items[rowItemIndex.toInt()].contentAssigned = false
-			end if
-		end for
-	end for
-end sub
+	' rowXTranslation is negative so we add to get the difference
+	translationDifference = rowItemXTranslation + rowXTranslation
+
+	return translationDifference
+end function
+
+
+function calculateRowVerticalTranslationDifference(rowIndex as Integer) as Float
+	rowNode = m.gridRowNodes[rowIndex]
+	rowYTranslation = rowNode.translation[1]
+	translationDifference = m.gridVerticalScroll.translation[1] + rowYTranslation - m.focusYOffset
+
+	return translationDifference
+end function
 
 
 sub onTimerFired()
@@ -356,7 +570,8 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 	' TODO needs to be updated to handle navigating to rows/items that haven't been loaded yet, for now just return false if we try to navigate to something that hasn't been loaded yet
 	print "navigateToRowItem called with rowIndex: " rowIndex " rowItemIndex: " rowItemIndex
 
-	createOnscreenNodes(rowIndex)
+	' We make the nodes that are showing onscreen up front
+	createOnscreenNodes(rowIndex, rowItemIndex)
 
 	renderedRow = m.renderedRows[rowIndex.toStr()]
 	if renderedRow = invalid then
@@ -378,11 +593,7 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 
 	gridRowNode = m.gridRowNodes[rowIndex]
 
-	print "brian focusFeedback.translation before: " m.focusFeedback.translation[0] " translation[1]: " m.focusFeedback.translation[1]
-	print "brian gridRowNode.headerHeight: " gridRowNode.headerHeight
 	m.focusFeedback.translation = [m.focusFeedback.translation[0], m.focusYOffset + gridRowNode.headerHeight]
-	print "brian focusFeedback.translation after: " m.focusFeedback.translation[0] " translation[1]: " m.focusFeedback.translation[1]
-
 
 	rowFirstChild = m.gridRowNodes[rowIndex].getChild(0)
 
@@ -404,13 +615,15 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 	containerTranslationY = gridRowNode.translation[1]
 	m.gridVerticalScroll.translation = [m.focusXOffset, -containerTranslationY + m.focusYOffset]
 
-	print "brian rowItemsContainerNode.translation was rowItemsContainerNode.translation[0]: " rowItemsContainerNode.translation[0] " translation[1]: " rowItemsContainerNode.translation[1]
 	rowItemsContainerNode.translation = [-rowItemNode.translation[0], rowItemsContainerNode.translation[1]]
-	print "brian rowItemsContainerNode.translation is now rowItemsContainerNode.translation[0]: " rowItemsContainerNode.translation[0] " translation[1]: " rowItemsContainerNode.translation[1]
 
 	rowItemNode.setFocus(true)
 
-	' recycleOffscreenNodes()
+	' ' Next go ahead and cleanup any nodes that are now outside the renderer area due to this navigation
+	recycleOffscreenNodes()
+
+	' Go ahead and start the offscreen node timer to allow new nodes to be created for the content that is now in the rendered area but not on screen yet
+	m.offscreenNodesTimer.control = "start"
 
 	return true
 End Function
@@ -489,7 +702,7 @@ End Function
 sub addGridContent()
 	rows = [
 		{
-			"rowIndex": 0
+			' "rowIndex": 0
 			"componentName": "GridItemRenderer"
 			"header": {
 				"componentName": "CustomRowHeader"
@@ -519,7 +732,7 @@ sub addGridContent()
 			]
 		},
 		{
-			"rowIndex": 1
+			' "rowIndex": 1
 			"componentName": "GridItemRenderer"
 			"header": {
 				"componentName": "CustomRowHeader"
@@ -549,7 +762,7 @@ sub addGridContent()
 			]
 		},
 		{
-			"rowIndex": 2
+			' "rowIndex": 2
 			"componentName": "GridItemRenderer"
 			"header": {
 				"componentName": "CustomRowHeader"
@@ -578,7 +791,7 @@ sub addGridContent()
 			]
 		},
 		{
-			"rowIndex": 3
+			' "rowIndex": 3
 			"componentName": "GridItemRenderer"
 			"header": {
 				"componentName": "CustomRowHeader"
@@ -608,7 +821,7 @@ sub addGridContent()
 			]
 		},
 		{
-			"rowIndex": 4
+			' "rowIndex": 4
 			"componentName": "GridItemRenderer"
 			"header": {
 				"componentName": "CustomRowHeader"
@@ -639,7 +852,9 @@ sub addGridContent()
 		}
 	]
 
-	' rows = [rows[0], rows[1]]
+	rows = [rows[0], rows[1], rows[3], rows[4],rows[0], rows[1], rows[3], rows[4], rows[0], rows[1], rows[3], rows[4], rows[0], rows[1], rows[3], rows[4], rows[0], rows[1], rows[3], rows[4]]
+
+	' rows = [rows[0]]
 
 	' Programmatically alternate every other item component to use GridItemRenderer2
 	for each row in rows
