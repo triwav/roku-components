@@ -115,229 +115,227 @@ sub createOnscreenNodes(focusedRowIndex as integer, focusedRowItemIndex as integ
 
 	currentRowIndex = focusedRowIndex
 	heightRendered = 0
-	' Go forward from the focused index
-	while m.height + m.extraHeightToRender - m.focusYOffset > heightRendered AND currentRowIndex < m.gridContent.count()
-		currentRowConfig = m.gridContent[currentRowIndex]
+	' Go forward from the focused row index
+	while m.height - m.focusYOffset >= heightRendered AND currentRowIndex < m.gridContent.count()
+		' print "Creating onscreen nodes for row " currentRowIndex " heightRendered: " heightRendered " heightToRender: " m.height - m.focusYOffset
+		renderRow(currentRowIndex, focusedRowIndex, focusedRowItemIndex, false)
 
-		rowRenderedNodes = m.renderedRows[currentRowIndex.toStr()]
-		if rowRenderedNodes = invalid then
-			rowRenderedNodes = {}
-			m.renderedRows[currentRowIndex.toStr()] = rowRenderedNodes
-		end if
-
-		rowNode = m.gridRowNodes[currentRowIndex]
-		if rowNode = invalid then
-			' Should never happen
-			print "row node invalid for row " currentRowIndex
-			return
-		end if
-
-		if currentRowIndex = 0 then
-			translationY = 0
+		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+		if rowHeaderNode = invalid then
+			headerHeight = 0
 		else
-			previousRowNode = m.gridRowNodes[currentRowIndex - 1]
-			translationY = previousRowNode.translation[1] + previousRowNode.yOffset
+			headerHeight = rowHeaderNode.height
 		end if
 
-		rowNode.translation = [0, translationY]
-		rowItemContainerNode = invalid
-		rowNodeFirstChild = rowNode.getChild(0)
-		if rowNodeFirstChild <> invalid AND rowNodeFirstChild.id = "rowItemsContainer" then
-			rowItemContainerNode = rowNodeFirstChild
-		else
-			rowNodeSecondChild = rowNode.getChild(1)
-			if rowNodeSecondChild <> invalid AND rowNodeSecondChild.id = "rowItemsContainer" then
-				rowItemContainerNode = rowNodeSecondChild
-			end if
-		end if
-
-		if rowItemContainerNode = invalid then
-			rowItemContainerNode = createObject("roSGNode", "Group")
-			rowItemContainerNode.id = "rowItemsContainer"
-			rowNode.appendChild(rowItemContainerNode)
-		end if
-
-		headerHeight = 0
-		header = currentRowConfig.header
-		if header <> invalid then
-			firstChild = rowNode.getChild(0)
-			if firstChild.id <> "rowItemsContainer" then
-				' Don't readd the header if it's already been added
-				headerHeight = firstChild.height
-			else
-				headerNode = invalid
-
-				componentName = header.componentName
-				if componentName = invalid then
-					print "No header componentName included for row " currentRowIndex
-				else
-					headerNode = createObject("roSGNode", componentName)
-				end if
-
-				if headerNode = invalid then
-					print "Failed to create header component: " componentName
-				else
-					headerNode.setRef("content", header)
-					headerNode.contentUpdated = true
-					rowNode.insertChild(headerNode, 0)
-					if headerNode.height = invalid then
-						print "Header height not provided for row " currentRowIndex
-					else
-						headerHeight = headerNode.height
-						rowItemContainerNode.translation = [0, headerHeight]
-					end if
-				end if
-			end if
-		end if
-
-		yOffset = 0
-		currentRowWidthRendered = 0
-
-		if focusedRowIndex = currentRowIndex then
-			currentRowItemIndex = focusedRowItemIndex
-		else
-			currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex]
-		end if
-
-		while currentRowWidthRendered < m.width - m.focusXOffset AND currentRowItemIndex < currentRowConfig.items.count()
-			' See if we already made this node
-			if rowRenderedNodes[currentRowItemIndex.toStr()] <> invalid then
-				print "Node already rendered for row " currentRowIndex " item " currentRowItemIndex
-				currentRowItemIndex = currentRowItemIndex + 1
-				continue while
-			end if
-
-			print "currentRowIndex" currentRowIndex "currentRowItemIndex" currentRowItemIndex "currentRowWidthRendered" currentRowWidthRendered " m.width: " m.width "m.focusXOffset " m.focusXOffset
-			rowItemNode = createNodeAndAssignContent(currentRowIndex, currentRowItemIndex)
-
-			if rowItemNode <> invalid then
-				if yOffset = 0 then
-					if rowItemNode.hasField("yOffset") then
-						yOffset = rowItemNode.yOffset
-					end if
-				end if
-
-				translationX = 0
-				if currentRowItemIndex <> 0
-					previousRowItemNode = rowRenderedNodes[(currentRowItemIndex - 1).toStr()]
-					if previousRowItemNode = invalid then
-						' We get in this case when scrolling back left so we need to take our translation from the right item instead of the left
-						nextNode = rowRenderedNodes[(currentRowItemIndex + 1).toStr()]
-						translationX = nextNode.translation[0] - rowItemNode.xOffset
-
-						rowItemNode.translation = [translationX, 0]
-					else
-						translationX = previousRowItemNode.translation[0] + previousRowItemNode.xOffset
-						rowItemNode.translation = [translationX, 0]
-					end if
-				end if
-
-				rowItemContainerNode.appendChild(rowItemNode)
-
-				xOffset = rowItemNode.xOffset
-				currentRowWidthRendered += xOffset
-				currentRowItemIndex = currentRowItemIndex + 1
-			end if
-		end while
-
-		' If we have a focusXOffset then we want to add one more before the focused row item if it does not already exist to keep the peek
-		if m.focusXOffset > 0 AND focusedRowItemIndex > 0 then
-			previousRowItemIndex = focusedRowItemIndex - 1
-			if rowRenderedNodes[previousRowItemIndex.toStr()] = invalid then
-				rowItemNode = createNodeAndAssignContent(currentRowIndex, previousRowItemIndex)
-
-				focusedRowItem = rowRenderedNodes[(focusedRowItemIndex).toStr()]
-				translationX = focusedRowItem.translation[0] - rowItemNode.xOffset
-
-				rowItemNode.translation = [translationX, 0]
-
-				rowItemContainerNode.insertChild(rowItemNode, 0)
-			end if
-		end if
-
-		' Same thing for focusYOffset but for the whole row
-		if m.focusYOffset > 0 AND focusedRowIndex > 0 then
-			previousRowIndex = focusedRowIndex - 1
-
-			currentRowItemIndex = m.lastFocusedItemIndexByRow[previousRowIndex]
-
-			rowRenderedNodes = m.renderedRows[previousRowIndex.toStr()]
-			if rowRenderedNodes = invalid OR rowRenderedNodes.count() = 0 then
-				rowRenderedNodes = {}
-				m.renderedRows[previousRowIndex.toStr()] = rowRenderedNodes
-
-				' TODO figure out how to avoid duplication
-
-				while currentRowWidthRendered < m.width - m.focusXOffset AND currentRowItemIndex < currentRowConfig.items.count()
-					' See if we already made this node
-					if rowRenderedNodes[currentRowItemIndex.toStr()] <> invalid then
-						print "Node already rendered for row " currentRowIndex " item " currentRowItemIndex
-						currentRowItemIndex = currentRowItemIndex + 1
-						continue while
-					end if
-
-					print "currentRowIndex" currentRowIndex "currentRowItemIndex" currentRowItemIndex "currentRowWidthRendered" currentRowWidthRendered " m.width: " m.width "m.focusXOffset " m.focusXOffset
-					rowItemNode = createNodeAndAssignContent(currentRowIndex, currentRowItemIndex)
-
-					if rowItemNode <> invalid then
-						if yOffset = 0 then
-							if rowItemNode.hasField("yOffset") then
-								yOffset = rowItemNode.yOffset
-							end if
-						end if
-
-						translationX = 0
-						if currentRowItemIndex <> 0
-							previousRowItemNode = rowRenderedNodes[(currentRowItemIndex - 1).toStr()]
-							if previousRowItemNode = invalid then
-								' We get in this case when scrolling back left so we need to take our translation from the right item instead of the left
-								nextNode = rowRenderedNodes[(currentRowItemIndex + 1).toStr()]
-								translationX = nextNode.translation[0] - rowItemNode.xOffset
-
-								rowItemNode.translation = [translationX, 0]
-							else
-								translationX = previousRowItemNode.translation[0] + previousRowItemNode.xOffset
-								rowItemNode.translation = [translationX, 0]
-							end if
-						end if
-
-						rowItemContainerNode.appendChild(rowItemNode)
-
-						xOffset = rowItemNode.xOffset
-						currentRowWidthRendered += xOffset
-						currentRowItemIndex = currentRowItemIndex + 1
-					end if
-				end while
-			else
-				print "Row " previousRowIndex " already rendered" rowRenderedNodes.count()
-			end if
-		end if
-
-
-		rowNode.headerHeight = headerHeight
-		rowNode.yOffset = yOffset + headerHeight
-		heightRendered += yOffset + headerHeight
+		rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+		heightRendered += rowItemContainerNode.yOffset + headerHeight
 		currentRowIndex = currentRowIndex + 1
 	end while
 
-	' Now go backward from the focused index to render content above the focused row
-	currentRowIndex = focusedRowIndex - 1
-	heightRendered = 0
-	' while m.extraHeightToRender + m.focusYOffset > heightRendered AND currentRowIndex >= 0
-
-	' 	yOffset = 0
-	' 	currentRowWidthRendered = 0
-	' 	currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex]
-	' 	reverseRowItemIndex = currentRowItemIndex - 1
-	' 	while currentRowWidthRendered < m.width - m.focusXOffset AND currentRowItemIndex >= 0
-	' 	end while
-	' end while
+	' Go backwards from the focused row index for peek
+	if focusedRowIndex > 0 then
+		renderRow(focusedRowIndex - 1, focusedRowIndex, focusedRowItemIndex, false)
+	end if
 end sub
 
 
-sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemIndex as Integer)
-	m.gridRowItemsContainerNodes[rowIndex] = createObject("roSGNode", "Group")
+sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemIndex as Integer, includeOffscreen as Boolean)
+	' PREREQUISITES/SETUP START
+	rowNode = m.gridRowNodes[rowIndex]
 
+	if rowNode = invalid then
+		' Should never happen
+		print "row node invalid for row " rowIndex
+		return
+	end if
+
+	previousRowNode = m.gridRowNodes[rowIndex - 1]
+	if rowIndex = 0 then
+		rowNode.translation = [0, 0]
+	else if previousRowNode = invalid then
+		' Should not be possible
+		return
+	else
+		headerHeight = 0
+		header = m.gridRowHeaderNodes[rowIndex - 1]
+		if header <> invalid then
+			headerHeight = header.height
+		end if
+
+		yOffset = m.gridRowItemsContainerNodes[rowIndex - 1].yOffset
+
+		rowNode.translation = [0, previousRowNode.translation[1] + headerHeight + yOffset]
+	end if
+
+	rowConfig = m.gridContent[rowIndex]
+	if rowConfig = invalid then
+		print "No row config for row " rowIndex
+		return
+	end if
+
+	rowRenderedNodes = m.renderedRows[rowIndex.toStr()]
+	if rowRenderedNodes = invalid then
+		rowRenderedNodes = {}
+		m.renderedRows[rowIndex.toStr()] = rowRenderedNodes
+	end if
+	' PREREQUISITES/SETUP END
+
+	' HEADER START
+	headerHeight = 0
+	rowHeaderNode = m.gridRowHeaderNodes[rowIndex]
+	if rowHeaderNode = invalid AND rowConfig.header <> invalid then
+		componentName = rowConfig.header.componentName
+		if componentName = invalid then
+			print "No header componentName included for row " rowIndex
+		else
+			rowHeaderNode = createObject("roSGNode", componentName)
+		end if
+
+		if rowHeaderNode = invalid then
+			print "Failed to create header component: " componentName
+		else
+			rowHeaderNode.setRef("content", rowConfig.header)
+			rowHeaderNode.contentUpdated = true
+			headerHeight = rowHeaderNode.height
+			rowNode.insertChild(rowHeaderNode, 0)
+			m.gridRowHeaderNodes[rowIndex] = rowHeaderNode
+		end if
+	end if
+	' HEADER END
+
+	' ROW ITEMS CONTAINER START
+	rowItemContainerNode = m.gridRowItemsContainerNodes[rowIndex]
+	if rowItemContainerNode = invalid then
+		rowItemContainerNode = createObject("roSGNode", "Group")
+		rowItemContainerNode.id = "rowItemsContainer"
+		rowItemContainerNode.update({
+			"yOffset": 0
+		}, true)
+		rowItemContainerNode.translation = [0, headerHeight]
+		rowNode.appendChild(rowItemContainerNode)
+		m.gridRowItemsContainerNodes[rowIndex] = rowItemContainerNode
+	end if
+	' ROW ITEMS CONTAINER END
+
+	' ROW ITEMS GENERATION START
+	' Going forward first from the focused item
+	widthRendered = 0
+	yOffset = 0
+
+	if includeOffscreen = true then
+		if focusedRowIndex = rowIndex then
+			widthToRender = m.width - m.focusXOffset + m.extraWidthToRenderFocusedRow
+		else
+			widthToRender = m.width - m.focusXOffset + m.extraWidthToRenderNonFocusedRow
+		end if
+	else
+		widthToRender = m.width - m.focusXOffset
+	end if
+
+	if rowIndex = focusedRowIndex then
+		currentRowItemIndex = focusedRowItemIndex
+	else
+		currentRowItemIndex = m.lastFocusedItemIndexByRow[rowIndex]
+	end if
+
+	while currentRowItemIndex < rowConfig.items.count() AND widthRendered <= widthToRender
+		rowItemNode = rowRenderedNodes[currentRowItemIndex.toStr()]
+		if rowItemNode <> invalid then
+			' print "Node already rendered for row " rowIndex " item " currentRowItemIndex
+
+			widthRendered += rowItemNode.xOffset
+			currentRowItemIndex = currentRowItemIndex + 1
+			continue while
+		end if
+
+		rowItemNode = createNodeAndAssignContent(rowIndex, currentRowItemIndex)
+
+		if rowItemNode = invalid then
+			print "Failed to create node for row " rowIndex " item " currentRowItemIndex
+		else
+			if yOffset = 0 AND rowItemNode.hasField("yOffset") then
+				yOffset = rowItemNode.yOffset
+				rowItemContainerNode.yOffset = yOffset
+				' print "Setting yOffset for row " rowIndex " to " yOffset
+			end if
+
+			previousRowItemNode = rowRenderedNodes[(currentRowItemIndex - 1).toStr()]
+			if previousRowItemNode = invalid then
+				xTranslation = 0
+			else
+				xTranslation = previousRowItemNode.translation[0] + previousRowItemNode.xOffset
+			end if
+			rowItemNode.translation = [xTranslation, 0]
+
+			widthRendered = widthRendered + rowItemNode.xOffset
+
+			rowItemContainerNode.appendChild(rowItemNode)
+		end if
+
+		currentRowItemIndex = currentRowItemIndex + 1
+	end while
+
+	if rowIndex = focusedRowIndex then
+		currentRowItemIndex = focusedRowItemIndex - 1
+	else
+		currentRowItemIndex = m.lastFocusedItemIndexByRow[rowIndex] - 1
+	end if
+
+
+	' Going backward from the focused item
+	widthRendered = 0
+
+	if rowIndex = focusedRowIndex then
+		currentRowItemIndex = focusedRowItemIndex - 1
+	else
+		currentRowItemIndex = m.lastFocusedItemIndexByRow[rowIndex] - 1
+	end if
+
+	if includeOffscreen = true then
+		if focusedRowIndex = rowIndex then
+			widthToRender = m.focusXOffset + m.extraWidthToRenderFocusedRow
+		else
+			widthToRender = m.focusXOffset + m.extraWidthToRenderNonFocusedRow
+		end if
+	else
+		widthToRender = m.focusXOffset
+	end if
+
+	while currentRowItemIndex >= 0 AND widthRendered <= widthToRender
+		rowItemNode = rowRenderedNodes[currentRowItemIndex.toStr()]
+		if rowItemNode <> invalid then
+			' print "Reverse: Node already rendered for row " rowIndex " item " currentRowItemIndex
+
+			widthRendered += rowItemNode.xOffset
+			currentRowItemIndex = currentRowItemIndex - 1
+			continue while
+		end if
+
+		' print "reverse widthRendered: " widthRendered " widthToRender: " widthToRender " currentRowItemIndex: " currentRowItemIndex
+		rowItemNode = createNodeAndAssignContent(rowIndex, currentRowItemIndex)
+
+		if rowItemNode = invalid then
+			print "Failed to create node for row " rowIndex " item " currentRowItemIndex
+		else
+			reversePreviousRowItemIndex = currentRowItemIndex + 1
+			reversePreviousRowItemNode = rowRenderedNodes[reversePreviousRowItemIndex.toStr()]
+			if reversePreviousRowItemNode = invalid then
+				' Should never happen
+				print "Previous row item node invalid for row " rowIndex " item " reversePreviousRowItemIndex
+				return
+			else
+				xTranslation = reversePreviousRowItemNode.translation[0] - rowItemNode.xOffset
+			end if
+			rowItemNode.translation = [xTranslation, 0]
+
+			widthRendered += rowItemNode.xOffset
+
+			rowItemContainerNode.insertChild(rowItemNode, 0)
+		end if
+
+		currentRowItemIndex = currentRowItemIndex - 1
+	end while
+	' ROW ITEMS GENERATION END
 end sub
 
 
@@ -529,12 +527,7 @@ sub onContentSuppliedMessageReceived(rows, msgInfo)
 		' 	previousRowIndex = rowIndex
 		' 	isUpdate = true
 		' else
-			' IMPROVEMENT could reuse these in the future although pretty cheap to make
 			rowNode = createObject("roSGNode", "Group")
-			rowNode.update({
-				"yOffset": 0
-				"headerHeight": 0
-			}, true)
 			m.lastFocusedItemIndexByRow[rowIndex] = 0
 
 			previousRowIndex = previousRowIndex + 1
@@ -593,7 +586,13 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 
 	gridRowNode = m.gridRowNodes[rowIndex]
 
-	m.focusFeedback.translation = [m.focusFeedback.translation[0], m.focusYOffset + gridRowNode.headerHeight]
+	currentRowHeaderHeight = 0
+	header = m.gridRowHeaderNodes[rowIndex]
+	if header <> invalid then
+		currentRowHeaderHeight = header.height
+	end if
+
+	m.focusFeedback.translation = [m.focusFeedback.translation[0], m.focusYOffset + currentRowHeaderHeight]
 
 	rowFirstChild = m.gridRowNodes[rowIndex].getChild(0)
 
@@ -853,6 +852,8 @@ sub addGridContent()
 	]
 
 	rows = [rows[0], rows[1], rows[3], rows[4],rows[0], rows[1], rows[3], rows[4], rows[0], rows[1], rows[3], rows[4], rows[0], rows[1], rows[3], rows[4], rows[0], rows[1], rows[3], rows[4]]
+
+	' rows = [rows[0], rows[1]]
 
 	' rows = [rows[0]]
 
