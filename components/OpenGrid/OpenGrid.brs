@@ -62,7 +62,6 @@ sub init()
 	m.offscreenNodesTimer = createObject("roSGNode", "Timer")
 	m.offscreenNodesTimer.duration = 0.01
 	m.offscreenNodesTimer.observeFieldScoped("fire", "onOffscreenNodesTimerFired")
-	m.offscreenNodesTimer.control = "start"
 
 	m.top.observeFieldScoped("focusXOffset", "onFocusXOffsetChanged")
 	m.top.observeFieldScoped("focusYOffset", "onFocusYOffsetChanged")
@@ -106,7 +105,7 @@ end function
 
 ' Creates nodes that are needed for content around the focused index.
 sub createOnscreenNodes(focusedRowIndex as integer, focusedRowItemIndex as integer)
-	' FIXME Add optimization to only try to create nodes for the row that changed
+	' IMPROVEMENT Add optimization to only try to create nodes for the row that changed
 
 	if focusedRowIndex < 0 then
 		print "Focused row index is out of bounds: " focusedRowIndex
@@ -139,14 +138,15 @@ sub createOnscreenNodes(focusedRowIndex as integer, focusedRowItemIndex as integ
 end sub
 
 
-sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemIndex as Integer, includeOffscreen as Boolean)
+function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemIndex as Integer, includeOffscreen as Boolean)
 	' PREREQUISITES/SETUP START
+	rowUpdated = false
 	rowNode = m.gridRowNodes[rowIndex]
 
 	if rowNode = invalid then
 		' Should never happen
 		print "row node invalid for row " rowIndex
-		return
+		return false
 	end if
 
 	previousRowNode = m.gridRowNodes[rowIndex - 1]
@@ -154,7 +154,7 @@ sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemInd
 		rowNode.translation = [0, 0]
 	else if previousRowNode = invalid then
 		' Should not be possible
-		return
+		return false
 	else
 		headerHeight = 0
 		header = m.gridRowHeaderNodes[rowIndex - 1]
@@ -170,7 +170,7 @@ sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemInd
 	rowConfig = m.gridContent[rowIndex]
 	if rowConfig = invalid then
 		print "No row config for row " rowIndex
-		return
+		return false
 	end if
 
 	rowRenderedNodes = m.renderedRows[rowIndex.toStr()]
@@ -253,6 +253,7 @@ sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemInd
 		if rowItemNode = invalid then
 			print "Failed to create node for row " rowIndex " item " currentRowItemIndex
 		else
+			rowUpdated = true
 			if yOffset = 0 AND rowItemNode.hasField("yOffset") then
 				yOffset = rowItemNode.yOffset
 				rowItemContainerNode.yOffset = yOffset
@@ -280,7 +281,6 @@ sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemInd
 	else
 		currentRowItemIndex = m.lastFocusedItemIndexByRow[rowIndex] - 1
 	end if
-
 
 	' Going backward from the focused item
 	widthRendered = 0
@@ -322,7 +322,7 @@ sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemInd
 			if reversePreviousRowItemNode = invalid then
 				' Should never happen
 				print "Previous row item node invalid for row " rowIndex " item " reversePreviousRowItemIndex
-				return
+				return false
 			else
 				xTranslation = reversePreviousRowItemNode.translation[0] - rowItemNode.xOffset
 			end if
@@ -336,7 +336,9 @@ sub renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemInd
 		currentRowItemIndex = currentRowItemIndex - 1
 	end while
 	' ROW ITEMS GENERATION END
-end sub
+
+	return rowUpdated
+end function
 
 
 sub recycleOffscreenNodes()
@@ -415,19 +417,61 @@ end sub
 
 
 sub onOffscreenNodesTimerFired()
-	' If we successfully made a node then start the timer again to keep making nodes until we have rendered everything within the render area, if we did not successfully make a node then that means we have rendered everything we can for the current render area
-	if createOffscreenNode() then
+	' print "Offscreen Nodes Timer Fired"
+
+	timeBudget = 16 ' ms
+	ts = createObject("roTimespan")
+	rowUpdated = false
+
+	currentRowIndex = m.currentRowIndex
+	heightRendered = 0
+
+	' Go forward from the focused row index
+	while m.height - m.focusYOffset + m.extraHeightToRender >= heightRendered AND currentRowIndex < m.gridContent.count() AND ts.totalMilliseconds() < timeBudget
+		rowUpdated = renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true) OR rowUpdated
+
+		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+		if rowHeaderNode = invalid then
+			headerHeight = 0
+		else
+			headerHeight = rowHeaderNode.height
+		end if
+
+		rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+		heightRendered += rowItemContainerNode.yOffset + headerHeight
+		currentRowIndex += 1
+	end while
+
+	' Go backward from the focused row index
+	heightRendered = 0
+	currentRowIndex = m.currentRowIndex - 1
+
+	while m.focusYOffset + m.extraHeightToRender >= heightRendered AND currentRowIndex >= 0 AND ts.totalMilliseconds() < timeBudget
+		' print "Offscreen timer going backwards, currentRowIndex: " currentRowIndex " heightRendered: " heightRendered " focusYOffset: " m.focusYOffset
+		rowUpdated = renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true) OR rowUpdated
+
+		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+		if rowHeaderNode = invalid then
+			headerHeight = 0
+		else
+			headerHeight = rowHeaderNode.height
+		end if
+
+		rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+		heightRendered += rowItemContainerNode.yOffset + headerHeight
+		currentRowIndex -= 1
+	end while
+
+	elapsedTime = ts.totalMilliseconds()
+
+	' print "onOffscreenNodesTimerFired elapsed time: " elapsedTime " ms"
+
+	' If we ran out of time start the timer again.
+	if elapsedTime > timeBudget then
+		' print "Starting timer again"
 		m.offscreenNodesTimer.control = "start"
 	end if
 end sub
-
-
-' Tries to create an offscreen node if one has not been rendered yet
-function createOffscreenNode() as Boolean
-	return true
-
-end function
-
 
 function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer)
 	rowRenderedNodes = m.renderedRows[rowIndex.toStr()]
