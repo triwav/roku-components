@@ -52,6 +52,8 @@ sub init()
 	m.gridVerticalScroll = m.top.findNode("gridVerticalScroll")
 	m.focusFeedback = m.top.findNode("focusFeedback")
 
+	m.rect = m.top.findNode("rect")
+
 	' Have to delay load probably due to weird main bug
 	m.timer = createObject("roSGNode", "Timer")
 	m.timer.duration = 0.1
@@ -65,6 +67,19 @@ sub init()
 
 	m.top.observeFieldScoped("focusXOffset", "onFocusXOffsetChanged")
 	m.top.observeFieldScoped("focusYOffset", "onFocusYOffsetChanged")
+
+	m.animationRate = 1400 / 1000000 ' Pixels per microsecond
+
+	m.animationTimer = createObject("roSGNode", "Timer")
+	m.animationTimer.duration = 0.001
+	m.animationTimer.observeField("fire", "onAnimationTimerFired")
+	m.animationTickTimeSpan = createObject("roTimespan")
+
+	m.focusFeedbackTranslationYAnimateTo = 0
+	m.focusFeedbackWidthAnimateTo = 0
+	m.focusFeedbackHeightAnimateTo = 0
+	m.focusedRowTranslationXAnimateTo = 0
+	m.gridVerticalScrollTranslationYAnimateTo = 0
 end sub
 
 
@@ -473,6 +488,7 @@ sub onOffscreenNodesTimerFired()
 	end if
 end sub
 
+
 function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer)
 	rowRenderedNodes = m.renderedRows[rowIndex.toStr()]
 	rowItemNode = rowRenderedNodes[rowItemIndex.toStr()]
@@ -511,13 +527,19 @@ function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer
 		print "Could not get node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName
 	else
 		rowItemContent = rowGridContent.items[rowItemIndex]
-		' Only set content if we have not already to improve performance
-		if rowItemContent.contentAssigned <> true then
+		' Only set content if we have not already to improve performance. We add our own field to track this
+		trackingAAFieldName = "OPEN_GRID_CONTENT_ASSIGNED_TRACKING"
+		if rowItemContent[trackingAAFieldName] = invalid then
+			rowItemContent[trackingAAFieldName] = {}
+		end if
+
+		trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
+		if rowItemContent[trackingAAFieldName][trackingKey] <> true then
 			rowItemNode.rowIndex = rowIndex
 			rowItemNode.rowItemIndex = rowItemIndex
 			rowItemNode.setRef("content", rowItemContent)
 			rowItemNode.contentUpdated = true
-			rowItemContent.contentAssigned = true
+			rowItemContent[trackingAAFieldName][trackingKey] = true
 		else
 			' print "Content already assigned for row " currentRowIndex " item " currentRowItemIndex
 		end if
@@ -553,6 +575,159 @@ end function
 sub onTimerFired()
 	m.top.setRef("renderedRowsRef", m.renderedRows)
 	addGridContent()
+end sub
+
+
+sub startAnimationTimer()
+	m.animationTickTimeSpan.mark()
+	m.animationTimer.control = "start"
+end sub
+
+
+sub onAnimationTimerFired()
+	timeElapsed = m.animationTickTimeSpan.totalMicroseconds()
+	changeAmount = m.animationRate * timeElapsed
+	' print "translateAmount:" ; translateAmount
+
+	xTranslation = m.rect.translation[0]
+	if xTranslation > m.width then
+		xTranslation = -100
+	end if
+	m.rect.translation = [xTranslation + changeAmount, 400]
+
+	allAnimationsCompleted = true
+
+	currentFocusFeedbackWidth = m.focusFeedback.width
+	animateTo = m.focusFeedbackWidthAnimateTo
+	if animateTo > currentFocusFeedbackWidth then
+		newWidth = currentFocusFeedbackWidth + changeAmount
+		if newWidth > animateTo then
+			newWidth = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.focusFeedback.width = newWidth
+	else if animateTo < currentFocusFeedbackWidth then
+		newWidth = currentFocusFeedbackWidth - changeAmount
+		if newWidth < animateTo then
+			newWidth = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.focusFeedback.width = newWidth
+	else
+		print "Focus feedback width animation completed"
+	end if
+
+	currentFocusFeedbackHeight = m.focusFeedback.height
+	animateTo = m.focusFeedbackHeightAnimateTo
+	if animateTo > currentFocusFeedbackHeight then
+		newHeight = currentFocusFeedbackHeight + changeAmount
+		if newHeight > animateTo then
+			newHeight = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.focusFeedback.height = newHeight
+	else if animateTo < currentFocusFeedbackHeight then
+		newHeight = currentFocusFeedbackHeight - changeAmount
+		if newHeight < animateTo then
+			newHeight = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.focusFeedback.height = newHeight
+	else
+		print "Focus feedback height animation completed"
+	end if
+
+
+	animateTo = m.focusFeedbackTranslationYAnimateTo
+	currentFocusFeedbackYTranslation = m.focusFeedback.translation[1]
+	if animateTo < currentFocusFeedbackYTranslation then
+		newTranslationY = currentFocusFeedbackYTranslation - changeAmount
+		if newTranslationY < animateTo then
+			newTranslationY = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.focusFeedback.translation = [m.focusFeedback.translation[0], newTranslationY]
+	else if animateTo > currentFocusFeedbackYTranslation then
+		newTranslationY = currentFocusFeedbackYTranslation + changeAmount
+		if newTranslationY > animateTo then
+			newTranslationY = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.focusFeedback.translation = [m.focusFeedback.translation[0], newTranslationY]
+	else
+		print "Focus Feedback Y translation animation completed"
+	end if
+
+
+	currentRowIndex = m.currentRowIndex
+	gridItemsContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+	currentFocusedRowTranslationX = gridItemsContainerNode.translation[0]
+	animateTo = m.focusedRowTranslationXAnimateTo
+	if animateTo < currentFocusedRowTranslationX then
+		newTranslationX = currentFocusedRowTranslationX - changeAmount
+		if newTranslationX < animateTo then
+			newTranslationX = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		gridItemsContainerNode.translation = [newTranslationX, gridItemsContainerNode.translation[1]]
+	else if animateTo > currentFocusedRowTranslationX then
+		newTranslationX = currentFocusedRowTranslationX + changeAmount
+		if newTranslationX > animateTo then
+			newTranslationX = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		gridItemsContainerNode.translation = [newTranslationX, gridItemsContainerNode.translation[1]]
+	else
+		print "Focused row translation animation completed"
+	end if
+
+
+	animateTo = m.gridVerticalScrollTranslationYAnimateTo
+	currentGridVerticalScrollYTranslation = m.gridVerticalScroll.translation[1]
+	if animateTo < currentGridVerticalScrollYTranslation then
+		newTranslationY = currentGridVerticalScrollYTranslation - changeAmount
+		if newTranslationY < animateTo then
+			newTranslationY = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], newTranslationY]
+	else if animateTo > currentGridVerticalScrollYTranslation then
+		newTranslationY = currentGridVerticalScrollYTranslation + changeAmount
+		if newTranslationY > animateTo then
+			newTranslationY = animateTo
+		else
+			allAnimationsCompleted = false
+		end if
+
+		m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], newTranslationY]
+	else
+		print "Grid vertical scroll Y translation animation completed"
+	end if
+
+	if allAnimationsCompleted = false then
+		startAnimationTimer()
+	else
+		' Do one final cleanup
+		recycleOffscreenNodes()
+	end if
 end sub
 
 
@@ -604,7 +779,7 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 		print "No content for row item at index" rowItemIndex " in row" rowIndex
 		return false
 	end if
-	' TODO needs to be updated to handle navigating to rows/items that haven't been loaded yet, for now just return false if we try to navigate to something that hasn't been loaded yet
+
 	print "navigateToRowItem called with rowIndex: " rowIndex " rowItemIndex: " rowItemIndex
 
 	' We make the nodes that are showing onscreen up front
@@ -618,15 +793,18 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 
 	rowItemNode = renderedRow[rowItemIndex.toStr()]
 	if rowItemNode = invalid then
-		stop
 		print "No loaded item at index" rowItemIndex " in row" rowIndex
 		return false
 	end if
 
 	m.currentRowIndex = rowIndex
 	m.lastFocusedItemIndexByRow[rowIndex] = rowItemIndex
-	m.focusFeedback.width = rowItemNode.width
-	m.focusFeedback.height = rowItemNode.height
+
+	m.focusFeedbackWidthAnimateTo = rowItemNode.width
+	m.focusFeedbackHeightAnimateTo = rowItemNode.height
+
+	m.gridVerticalScrollTranslationYAnimateTo = -m.gridRowNodes[rowIndex].translation[1] + m.focusYOffset
+	m.focusedRowTranslationXAnimateTo = -rowItemNode.translation[0]
 
 	gridRowNode = m.gridRowNodes[rowIndex]
 
@@ -636,33 +814,14 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 		currentRowHeaderHeight = header.height
 	end if
 
-	m.focusFeedback.translation = [m.focusFeedback.translation[0], m.focusYOffset + currentRowHeaderHeight]
+	m.focusFeedbackTranslationYAnimateTo = currentRowHeaderHeight + m.focusYOffset
 
-	rowFirstChild = m.gridRowNodes[rowIndex].getChild(0)
+	startAnimationTimer()
 
-	rowItemsContainerNode = invalid
-	if rowFirstChild.id = "rowItemsContainer" then
-		rowItemsContainerNode = rowFirstChild
-	else
-		secondChild = m.gridRowNodes[rowIndex].getChild(1)
-		if secondChild.id = "rowItemsContainer" then
-			rowItemsContainerNode = secondChild
-		end if
-	end if
-
-	if rowItemsContainerNode = invalid then
-		print "Could not find row items container for row " rowIndex
-		return false
-	end if
-
-	containerTranslationY = gridRowNode.translation[1]
-	m.gridVerticalScroll.translation = [m.focusXOffset, -containerTranslationY + m.focusYOffset]
-
-	rowItemsContainerNode.translation = [-rowItemNode.translation[0], rowItemsContainerNode.translation[1]]
-
+	' TODO decide if we need to move this
 	rowItemNode.setFocus(true)
 
-	' ' Next go ahead and cleanup any nodes that are now outside the renderer area due to this navigation
+	' Next go ahead and cleanup any nodes that are currently outside the renderer area due to this navigation
 	recycleOffscreenNodes()
 
 	' Go ahead and start the offscreen node timer to allow new nodes to be created for the content that is now in the rendered area but not on screen yet
