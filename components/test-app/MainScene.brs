@@ -1,6 +1,6 @@
 sub init()
-	' m.grid = m.top.findNode("grid")
-	' m.grid.setFocus(true)
+	m.grid = m.top.findNode("grid")
+	m.grid.setFocus(true)
 	' parent = m.top
 	' for i = 0 to 500
 	' 	item = createObject("roSgNode", "OpenGridItem")

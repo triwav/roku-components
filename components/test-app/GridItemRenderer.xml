@@ -8,12 +8,19 @@
 		<field id="rowIndex" type="integer" />
 		<field id="rowItemIndex" type="integer" />
 
+		<field id="gridHasFocus" type="boolean" />
+		<field id="rowHasFocus" type="boolean" />
+		<field id="itemHasFocus" type="boolean" />
+		<field id="focusPercent" type="float" />
+		<field id="rowFocusPercent" type="float" />
+
 		<!-- Output fields -->
-		<field id="width" alias="poster.width, rect.width, label.width" />
-		<field id="height" alias="poster.height" />
+		<field id="width" type="float" />
+		<field id="height" type="float" />
 
 		<field id="xOffset" type="float" />
 		<field id="yOffset" type="float" />
+		<field id="animate" type="assocarray" />
 	</interface>
 
 	<children>

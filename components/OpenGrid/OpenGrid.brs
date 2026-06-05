@@ -3,7 +3,6 @@ sub init()
 	m.width = currentDesignResolution.width
 	m.height = currentDesignResolution.height
 
-	' TODO need to add observer for this so it can be changed
 	m.top.width = m.width
 	m.top.height = m.height
 
@@ -25,6 +24,8 @@ sub init()
 	m.focusXOffset = 0
 	m.focusYOffset = 0
 
+	m.gridHasFocus = false
+
 	' The actual content for the grid, an array of row configs where each row config has an array of item configs
 	m.gridContent = []
 	' IMPROVEMENT perhaps remove grid prefix from these variable names to make it less verbose
@@ -33,6 +34,8 @@ sub init()
 	m.gridRowNodes = []
 
 	m.gridRowHeaderNodes = []
+
+	m.rowsRenderedNodesRanges = []
 
 	' We need to access the item containers quite often so we store them here after they are made
 	m.gridRowItemsContainerNodes = []
@@ -48,11 +51,10 @@ sub init()
 	m.renderThreadQueue.addMessageHandler(contentSuppliedQueueId, "onContentSuppliedMessageReceived")
 	m.top.contentSuppliedQueueId = contentSuppliedQueueId
 
-
 	m.gridVerticalScroll = m.top.findNode("gridVerticalScroll")
 	m.focusFeedback = m.top.findNode("focusFeedback")
 
-	m.rect = m.top.findNode("rect")
+	m.contentAssignedKey = "OPEN_GRID_CONTENT_ASSIGNED_TRACKING"
 
 	' Have to delay load probably due to weird main bug
 	m.timer = createObject("roSGNode", "Timer")
@@ -65,8 +67,11 @@ sub init()
 	m.offscreenNodesTimer.duration = 0.01
 	m.offscreenNodesTimer.observeFieldScoped("fire", "onOffscreenNodesTimerFired")
 
+	m.top.observeFieldScoped("width", "onWidthChanged")
+	m.top.observeFieldScoped("height", "onHeightChanged")
 	m.top.observeFieldScoped("focusXOffset", "onFocusXOffsetChanged")
 	m.top.observeFieldScoped("focusYOffset", "onFocusYOffsetChanged")
+	m.top.observeFieldScoped("focusedChild", "onFocusedChildChanged")
 
 	m.animationRate = 1400 / 1000000 ' Pixels per microsecond
 
@@ -78,8 +83,27 @@ sub init()
 	m.focusFeedbackTranslationYAnimateTo = 0
 	m.focusFeedbackWidthAnimateTo = 0
 	m.focusFeedbackHeightAnimateTo = 0
-	m.focusedRowTranslationXAnimateTo = 0
 	m.gridVerticalScrollTranslationYAnimateTo = 0
+	m.runningRowItemsAnimations = {}
+	m.rowsNeedingHorizontalTranslationUpdate = {}
+
+	' Includes the last rowFocusPercent values for each renderered row index. Used to avoid having to set fields when the value hasn't changed
+	m.rowFocusPercents = {}
+
+	' Includes the last focusPercent values for each renderered row item in the current row. Used to avoid having to set fields when the value hasn't changed
+	m.currentRowFocusPercents = {}
+
+	m.gridNeedsVerticalTranslationUpdate = false
+end sub
+
+
+sub onWidthChanged()
+	m.width = m.top.width
+end sub
+
+
+sub onHeightChanged()
+	m.height = m.top.height
 end sub
 
 
@@ -103,6 +127,27 @@ sub onFocusYOffsetChanged()
 
 	m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], m.gridVerticalScroll.translation[1] + yOffsetDifference]
 	m.focusFeedback.translation = [m.focusFeedback.translation[0], m.focusFeedback.translation[1] + yOffsetDifference]
+end sub
+
+
+sub onFocusedChildChanged()
+	updatedFocus = false
+	if m.top.hasFocus() = true then
+		m.gridHasFocus = true
+		updatedFocus = true
+	else if m.top.isInFocusChain() = false then
+		m.gridHasFocus = false
+		updatedFocus = true
+	end if
+
+	if updatedFocus = true then
+		for each rowIndex in m.renderedRows
+			for each itemIndex in m.renderedRows[rowIndex]
+				renderedNode = m.renderedRows[rowIndex][itemIndex]
+				conditionallySetField(renderedNode, "gridHasFocus", m.gridHasFocus)
+			end for
+		end for
+	end if
 end sub
 
 
@@ -263,7 +308,7 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 			continue while
 		end if
 
-		rowItemNode = createNodeAndAssignContent(rowIndex, currentRowItemIndex)
+		rowItemNode = conditionallyCreateNodeAndAssignContent(rowIndex, currentRowItemIndex)
 
 		if rowItemNode = invalid then
 			print "Failed to create node for row " rowIndex " item " currentRowItemIndex
@@ -275,7 +320,14 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 				' print "Setting yOffset for row " rowIndex " to " yOffset
 			end if
 
-			previousRowItemNode = rowRenderedNodes[(currentRowItemIndex - 1).toStr()]
+			previousRowItemNode = invalid
+			for i = currentRowItemIndex - 1 to 0 step -1
+				previousRowItemNode = rowRenderedNodes[i.toStr()]
+				if previousRowItemNode <> invalid then
+					exit for
+				end if
+			end for
+
 			if previousRowItemNode = invalid then
 				xTranslation = 0
 			else
@@ -327,7 +379,7 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		end if
 
 		' print "reverse widthRendered: " widthRendered " widthToRender: " widthToRender " currentRowItemIndex: " currentRowItemIndex
-		rowItemNode = createNodeAndAssignContent(rowIndex, currentRowItemIndex)
+		rowItemNode = conditionallyCreateNodeAndAssignContent(rowIndex, currentRowItemIndex)
 
 		if rowItemNode = invalid then
 			print "Failed to create node for row " rowIndex " item " currentRowItemIndex
@@ -365,7 +417,7 @@ sub recycleOffscreenNodes()
 		' First check if this is outside the vertical render area, if it is then we can recycle the entire row without needing to check each individual item
 		translationDifference = calculateRowVerticalTranslationDifference(rowIndex.toInt())
 		if translationDifference > m.height - m.focusYOffset + m.extraHeightToRender OR translationDifference + m.focusYOffset < -m.extraHeightToRender then
-			print "Recycling entire row " rowIndex " with vertical translation difference of " translationDifference
+			' print "Recycling entire row " rowIndex " with vertical translation difference of " translationDifference
 
 			' Recycle entire row
 			for each rowItemIndex in renderedRows[rowIndex]
@@ -373,45 +425,70 @@ sub recycleOffscreenNodes()
 			end for
 
 			renderedRows.delete(rowIndex)
+			m.rowsRenderedNodesRanges[rowIndex.toInt()] = {"start": -1, "end": -1}
 
 			continue for
 		end if
 
 		' Now handle rendered rows that are within the vertical render area but may have items that are outside the horizontal render area
 
-		' Check if this is the currently focused row as we may want to have different horizontal render area thresholds for the focused row vs the non-focused rows
+		didRecycleNode = false
 
+		' Check if this is the currently focused row as we may want to have different horizontal render area thresholds for the focused row vs the non-focused rows
 		if rowIndex.toInt() = m.currentRowIndex then
 			' Focused row, use focused row render area thresholds
-			print "Checking horizontal thresholds for focused row " rowIndex
+			' print "Checking horizontal thresholds for focused row " rowIndex
 
 			for each rowItemIndex in renderedRows[rowIndex]
 				rowItemNode = renderedRows[rowIndex][rowItemIndex]
+				if rowItemNode = invalid then
+					print "Row item node invalid for row " rowIndex " item " rowItemIndex
+					continue for
+				end if
 
-				translationDifference = calculateHorizontalTranslationDifference(rowItemNode, rowItemIndex)
-				if translationDifference > m.width - m.focusXOffset + m.extraWidthToRenderFocusedRow OR translationDifference + rowItemNode.width < -m.focusXOffset - m.extraWidthToRenderFocusedRow then
+				translationDifference = calculateHorizontalTranslationDifference(rowItemNode, true)
+				if (translationDifference > m.width - m.focusXOffset + m.extraWidthToRenderFocusedRow) OR (translationDifference + rowItemNode.width < -m.focusXOffset - m.extraWidthToRenderFocusedRow) then
 					recycleNode(rowIndex, rowItemIndex)
+					didRecycleNode = true
 				end if
 			end for
 		else
 			' Non-focused row, use non-focused row render area thresholds
-			print "Checking horizontal thresholds for non-focused row " rowIndex
+			' print "Checking horizontal thresholds for non-focused row " rowIndex
 
 			for each rowItemIndex in renderedRows[rowIndex]
 				rowItemNode = renderedRows[rowIndex][rowItemIndex]
+				if rowItemNode = invalid then
+					print "Row item node invalid for row " rowIndex " item " rowItemIndex
+					continue for
+				end if
 
-				translationDifference = calculateHorizontalTranslationDifference(rowItemNode, rowItemIndex)
+				translationDifference = calculateHorizontalTranslationDifference(rowItemNode, false)
 				if translationDifference > m.width - m.focusXOffset + m.extraWidthToRenderNonFocusedRow OR translationDifference + rowItemNode.width < -m.focusXOffset - m.extraWidthToRenderNonFocusedRow then
 					recycleNode(rowIndex, rowItemIndex)
+					didRecycleNode = true
 				end if
 			end for
+		end if
+
+		' If we recycled nodes then we need to update the rendered nodes range
+		if didRecycleNode then
+			renderedRowIndexes = []
+			for each renderedRowItemIndex in renderedRows[rowIndex]
+				renderedRowIndexes.push(renderedRowItemIndex.toInt())
+			end for
+			renderedRowIndexes.sort()
+
+			rowRenderedNodesRange = m.rowsRenderedNodesRanges[rowIndex.toInt()]
+			rowRenderedNodesRange.start = renderedRowIndexes[0]
+			rowRenderedNodesRange.end = renderedRowIndexes.peek()
 		end if
 	end for
 end sub
 
 
 sub recycleNode(rowIndex as String, rowItemIndex as String)
-	print "Recycling node for row " rowIndex " item " rowItemIndex
+	' print "Recycling node for row " rowIndex " item " rowItemIndex
 	renderedRows = m.renderedRows
 	rowItemNode = renderedRows[rowIndex.toStr()][rowItemIndex.toStr()]
 
@@ -424,7 +501,18 @@ sub recycleNode(rowIndex as String, rowItemIndex as String)
 
 	renderedRows[rowIndex].delete(rowItemIndex)
 
-	m.gridContent[rowIndex.toInt()].items[rowItemIndex.toInt()].contentAssigned = false
+	trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
+	rowContent = m.gridContent[rowIndex.toInt()].items
+	rowItemContent = rowContent[rowItemIndex.toInt()]
+	rowItemContent[m.contentAssignedKey].delete(trackingKey)
+
+	rowItemNode.content = invalid
+
+	rowItemNode.unobserveFieldScoped("xOffset")
+	rowItemNode.unobserveFieldScoped("yOffset")
+	rowItemNode.unobserveFieldScoped("width")
+	rowItemNode.unobserveFieldScoped("height")
+	rowItemNode.unobserveFieldScoped("animate")
 
 	rowItemContainerNode = rowItemNode.getParent()
 	rowItemContainerNode.removeChild(rowItemNode)
@@ -489,7 +577,7 @@ sub onOffscreenNodesTimerFired()
 end sub
 
 
-function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer)
+function conditionallyCreateNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer)
 	rowRenderedNodes = m.renderedRows[rowIndex.toStr()]
 	rowItemNode = rowRenderedNodes[rowItemIndex.toStr()]
 
@@ -514,45 +602,204 @@ function createNodeAndAssignContent(rowIndex as Integer, rowItemIndex as Integer
 
 	if needsNodeCreation then
 		if m.availableRecycledNodes[itemComponentName] <> invalid AND m.availableRecycledNodes[itemComponentName].count() > 0 then
-			print "Reusing node from recycled pool for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName
+			' print "Reusing node from recycled pool for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName
 			rowItemNode = m.availableRecycledNodes[itemComponentName].pop()
 		else
-			print "Creating node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName
+			' print "Creating node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName
 			rowItemNode = createObject("roSGNode", itemComponentName)
-		end if
-		rowRenderedNodes[rowItemIndex.toStr()] = rowItemNode
+
+			if rowItemNode.hasField("xOffset") = false then
+				print "Node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName + " does not have required xOffset field"
+				return invalid
+			else if rowItemNode.hasField("rowIndex") = false then
+				print "Node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName + " does not have required rowIndex field"
+				return invalid
+			else if rowItemNode.hasField("rowItemIndex") = false then
+				print "Node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName + " does not have required rowItemIndex field"
+				return invalid
+			end if
+		endif
 	end if
 
 	if rowItemNode = invalid then
 		print "Could not get node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName
-	else
-		rowItemContent = rowGridContent.items[rowItemIndex]
-		' Only set content if we have not already to improve performance. We add our own field to track this
-		trackingAAFieldName = "OPEN_GRID_CONTENT_ASSIGNED_TRACKING"
-		if rowItemContent[trackingAAFieldName] = invalid then
-			rowItemContent[trackingAAFieldName] = {}
+		return invalid
+	end if
+
+	rowItemContent = rowGridContent.items[rowItemIndex]
+	' Only set content if we have not already to improve performance. We add our own field to track this
+	contentAssigned = rowItemContent[m.contentAssignedKey]
+	if contentAssigned = invalid then
+		contentAssigned = {}
+		rowItemContent[m.contentAssignedKey] = contentAssigned
+	end if
+
+	trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
+	if contentAssigned[trackingKey] <> true then
+		rowItemNode.rowIndex = rowIndex
+		rowItemNode.rowItemIndex = rowItemIndex
+		conditionallySetField(rowItemNode, "gridHasFocus", m.gridHasFocus)
+		rowItemNode.setRef("content", rowItemContent)
+		rowItemNode.contentUpdated = true
+		contentAssigned[trackingKey] = true
+
+		rowRenderedNodes[rowItemIndex.toStr()] = rowItemNode
+
+		rowRenderedNodesRanges = m.rowsRenderedNodesRanges[rowIndex]
+		if rowRenderedNodesRanges.start = -1 OR rowItemIndex < rowRenderedNodesRanges.start then
+			rowRenderedNodesRanges.start = rowItemIndex
 		end if
 
-		trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
-		if rowItemContent[trackingAAFieldName][trackingKey] <> true then
-			rowItemNode.rowIndex = rowIndex
-			rowItemNode.rowItemIndex = rowItemIndex
-			rowItemNode.setRef("content", rowItemContent)
-			rowItemNode.contentUpdated = true
-			rowItemContent[trackingAAFieldName][trackingKey] = true
-		else
-			' print "Content already assigned for row " currentRowIndex " item " currentRowItemIndex
+		if rowRenderedNodesRanges.end = -1 OR rowItemIndex > rowRenderedNodesRanges.end then
+			rowRenderedNodesRanges.end = rowItemIndex
 		end if
+
+		' We don't add our observers until after initial content set to avoid extra triggering
+		rowItemNode.observeFieldScoped("xOffset", "onRowItemXOffsetChanged")
+		rowItemNode.observeFieldScoped("yOffset", "onRowItemYOffsetChanged")
+		rowItemNode.observeFieldScoped("width", "onRowItemWidthChanged")
+		rowItemNode.observeFieldScoped("height", "onRowItemHeightChanged")
+		rowItemNode.observeFieldScoped("animate", "onRowItemAnimateChanged")
+	else
+		' print "Content already assigned for row " currentRowIndex " item " currentRowItemIndex
 	end if
 
 	return rowItemNode
 end function
 
 
+sub conditionallySetField(node as Object, fieldName as String, value as Dynamic)
+	if node.hasField(fieldName) then
+		node[fieldName] = value
+	end if
+end sub
+
+
+sub onRowItemXOffsetChanged(msg)
+	rowItem = msg.getRoSgNode()
+
+	m.rowsNeedingHorizontalTranslationUpdate[rowItem.rowIndex.toStr()] = true
+
+	conditionallyStartAnimationTimer()
+end sub
+
+
+sub onRowItemYOffsetChanged(msg)
+	yOffset = msg.getData()
+	rowItem = msg.getRoSgNode()
+
+	rowIndex = rowItem.rowIndex
+	rowItemIndex = rowItem.rowItemIndex
+
+	if rowIndex <> m.currentRowIndex OR rowItemIndex <> m.lastFocusedItemIndexByRow[rowIndex] then
+		' Perhaps revisit in the future but this keeps it simple
+		return
+	end if
+
+	' Update the parent container's translation to reflect our new needed vertical space
+	rowItemsContainer = rowItem.getParent()
+	rowItemsContainer.yOffset = yOffset
+
+	m.gridNeedsVerticalTranslationUpdate = true
+
+	conditionallyStartAnimationTimer()
+end sub
+
+
+sub onRowItemWidthChanged(msg)
+	rowItem = msg.getRoSgNode()
+
+	rowIndex = rowItem.rowIndex
+
+	if rowIndex <> m.currentRowIndex then
+		return
+	end if
+
+	if rowItem.rowItemIndex <> m.lastFocusedItemIndexByRow[rowIndex] then
+		return
+	end if
+
+	' Only update the focus feedback width if the currently focused item changed
+	m.focusFeedbackWidthAnimateTo = rowItem.width
+
+	conditionallyStartAnimationTimer()
+end sub
+
+
+sub onRowItemHeightChanged(msg)
+	rowItem = msg.getRoSgNode()
+
+	rowIndex = rowItem.rowIndex
+
+	if rowIndex <> m.currentRowIndex then
+		return
+	end if
+
+	if rowItem.rowItemIndex <> m.lastFocusedItemIndexByRow[rowIndex] then
+		return
+	end if
+
+	' Only update the focus feedback width if the currently focused item changed
+	m.focusFeedbackHeightAnimateTo = rowItem.width
+
+	conditionallyStartAnimationTimer()
+end sub
+
+
+sub onRowItemAnimateChanged(msg)
+	animate = msg.getData()
+
+	if animate = invalid then return
+
+	rowItemNode = msg.getRoSgNode()
+
+	rowIndex = rowItemNode.rowIndex
+
+	animationsKey = rowIndex.toStr() + "_" + rowItemNode.rowItemIndex.toStr()
+	runningRowItemAnimations = m.runningRowItemsAnimations[animationsKey]
+	if runningRowItemAnimations = invalid then
+		runningRowItemAnimations = {}
+		m.runningRowItemsAnimations[animationsKey] = runningRowItemAnimations
+	end if
+
+	animateXOffset = animate.xOffset
+	if animateXOffset <> invalid then
+		' Make sure we have the correct parameters
+		animateTo = animateXOffset.animateTo
+		if animateTo <> invalid then
+			runningRowItemAnimations["xOffset"] = {
+				"node": rowItemNode
+				"animateTo": animateTo
+			}
+		end if
+	end if
+
+	animateYOffset = animate.yOffset
+	if animateYOffset <> invalid then
+		' Make sure we have the correct parameters
+		animateTo = animateYOffset.animateTo
+		if animateTo <> invalid then
+			runningRowItemAnimations["yOffset"] = {
+				"node": rowItemNode
+				"animateTo": animateTo
+			}
+			' print "Added Y offset animation for row " rowIndex " item " rowItemNode.rowItemIndex  ":" rowItemNode.rowItemIndex" animateTo: " animateTo
+		end if
+	end if
+
+	conditionallyStartAnimationTimer()
+end sub
+
+
 ' Calculates the horizontal distance from the currently focused node to this node
-function calculateHorizontalTranslationDifference(rowItemNode, rowItemIndex as String) as Float
+function calculateHorizontalTranslationDifference(rowItemNode, calculateBasedOffAnimationTarget as Boolean) as Float
 	rowItemContainerNode = rowItemNode.getParent()
-	rowXTranslation = rowItemContainerNode.translation[0]
+
+	if calculateBasedOffAnimationTarget = true then
+		rowXTranslation = 0
+	else
+		rowXTranslation = rowItemContainerNode.translation[0]
+	end if
 
 	rowItemXTranslation = rowItemNode.translation[0]
 
@@ -578,126 +825,22 @@ sub onTimerFired()
 end sub
 
 
-sub startAnimationTimer()
-	m.animationTickTimeSpan.mark()
-	m.animationTimer.control = "start"
+sub conditionallyStartAnimationTimer()
+	if m.animationTimer.control <> "start" then
+		m.animationTickTimeSpan.mark()
+		m.animationTimer.control = "start"
+	end if
 end sub
 
 
 sub onAnimationTimerFired()
 	timeElapsed = m.animationTickTimeSpan.totalMicroseconds()
 	changeAmount = m.animationRate * timeElapsed
-	' print "translateAmount:" ; translateAmount
 
-	xTranslation = m.rect.translation[0]
-	if xTranslation > m.width then
-		xTranslation = -100
-	end if
-	m.rect.translation = [xTranslation + changeAmount, 400]
+	isFocusFeedbackAnimationCompleted = animateFocusFeedback(changeAmount)
 
-	allAnimationsCompleted = true
-
-	currentFocusFeedbackWidth = m.focusFeedback.width
-	animateTo = m.focusFeedbackWidthAnimateTo
-	if animateTo > currentFocusFeedbackWidth then
-		newWidth = currentFocusFeedbackWidth + changeAmount
-		if newWidth > animateTo then
-			newWidth = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		m.focusFeedback.width = newWidth
-	else if animateTo < currentFocusFeedbackWidth then
-		newWidth = currentFocusFeedbackWidth - changeAmount
-		if newWidth < animateTo then
-			newWidth = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		m.focusFeedback.width = newWidth
-	else
-		print "Focus feedback width animation completed"
-	end if
-
-	currentFocusFeedbackHeight = m.focusFeedback.height
-	animateTo = m.focusFeedbackHeightAnimateTo
-	if animateTo > currentFocusFeedbackHeight then
-		newHeight = currentFocusFeedbackHeight + changeAmount
-		if newHeight > animateTo then
-			newHeight = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		m.focusFeedback.height = newHeight
-	else if animateTo < currentFocusFeedbackHeight then
-		newHeight = currentFocusFeedbackHeight - changeAmount
-		if newHeight < animateTo then
-			newHeight = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		m.focusFeedback.height = newHeight
-	else
-		print "Focus feedback height animation completed"
-	end if
-
-
-	animateTo = m.focusFeedbackTranslationYAnimateTo
-	currentFocusFeedbackYTranslation = m.focusFeedback.translation[1]
-	if animateTo < currentFocusFeedbackYTranslation then
-		newTranslationY = currentFocusFeedbackYTranslation - changeAmount
-		if newTranslationY < animateTo then
-			newTranslationY = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		m.focusFeedback.translation = [m.focusFeedback.translation[0], newTranslationY]
-	else if animateTo > currentFocusFeedbackYTranslation then
-		newTranslationY = currentFocusFeedbackYTranslation + changeAmount
-		if newTranslationY > animateTo then
-			newTranslationY = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		m.focusFeedback.translation = [m.focusFeedback.translation[0], newTranslationY]
-	else
-		print "Focus Feedback Y translation animation completed"
-	end if
-
-
-	currentRowIndex = m.currentRowIndex
-	gridItemsContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
-	currentFocusedRowTranslationX = gridItemsContainerNode.translation[0]
-	animateTo = m.focusedRowTranslationXAnimateTo
-	if animateTo < currentFocusedRowTranslationX then
-		newTranslationX = currentFocusedRowTranslationX - changeAmount
-		if newTranslationX < animateTo then
-			newTranslationX = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		gridItemsContainerNode.translation = [newTranslationX, gridItemsContainerNode.translation[1]]
-	else if animateTo > currentFocusedRowTranslationX then
-		newTranslationX = currentFocusedRowTranslationX + changeAmount
-		if newTranslationX > animateTo then
-			newTranslationX = animateTo
-		else
-			allAnimationsCompleted = false
-		end if
-
-		gridItemsContainerNode.translation = [newTranslationX, gridItemsContainerNode.translation[1]]
-	else
-		print "Focused row translation animation completed"
-	end if
-
-
+	shouldUpdateRowFocusPercent = true
+	isGridVerticalScrollTranslationYAnimationCompleted = true
 	animateTo = m.gridVerticalScrollTranslationYAnimateTo
 	currentGridVerticalScrollYTranslation = m.gridVerticalScroll.translation[1]
 	if animateTo < currentGridVerticalScrollYTranslation then
@@ -705,7 +848,7 @@ sub onAnimationTimerFired()
 		if newTranslationY < animateTo then
 			newTranslationY = animateTo
 		else
-			allAnimationsCompleted = false
+			isGridVerticalScrollTranslationYAnimationCompleted = false
 		end if
 
 		m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], newTranslationY]
@@ -714,20 +857,415 @@ sub onAnimationTimerFired()
 		if newTranslationY > animateTo then
 			newTranslationY = animateTo
 		else
-			allAnimationsCompleted = false
+			isGridVerticalScrollTranslationYAnimationCompleted = false
 		end if
 
 		m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], newTranslationY]
 	else
-		print "Grid vertical scroll Y translation animation completed"
+		shouldUpdateRowFocusPercent = false
 	end if
 
+	currentRowIndex = m.currentRowIndex
+	currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex].toStr()
+	isCurrentFocusedRowItemTranslationXAnimationCompleted = true
+
+	renderedRowItems = m.renderedRows[currentRowIndex.toStr()]
+	if renderedRowItems = invalid then
+		print "No rendered row items for current row index " currentRowIndex
+		shouldUpdateFocusPercent = false
+	else
+		shouldUpdateFocusPercent = true
+
+		focusedRowItem = renderedRowItems[currentRowItemIndex]
+		if focusedRowItem = invalid then
+			print "Focused row item node invalid for current row index " currentRowIndex " item index " currentRowItemIndex
+		else
+			currentFocusedRowItemTranslationX = focusedRowItem.translation[0]
+			animateTo = 0
+			if animateTo < currentFocusedRowItemTranslationX then
+				newTranslationX = currentFocusedRowItemTranslationX - changeAmount
+				if newTranslationX < animateTo then
+					newTranslationX = animateTo
+				else
+					isCurrentFocusedRowItemTranslationXAnimationCompleted = false
+				end if
+
+				focusedRowItem.translation = [newTranslationX, focusedRowItem.translation[1]]
+				m.rowsNeedingHorizontalTranslationUpdate[currentRowIndex.toStr()] = true
+			else if animateTo > currentFocusedRowItemTranslationX then
+				newTranslationX = currentFocusedRowItemTranslationX + changeAmount
+				if newTranslationX > animateTo then
+					newTranslationX = animateTo
+				else
+					isCurrentFocusedRowItemTranslationXAnimationCompleted = false
+				end if
+
+				focusedRowItem.translation = [newTranslationX, focusedRowItem.translation[1]]
+				m.rowsNeedingHorizontalTranslationUpdate[currentRowIndex.toStr()] = true
+			else
+				shouldUpdateFocusPercent = false
+			end if
+		end if
+	end if
+
+	for each key in m.runningRowItemsAnimations
+		runningRowItemAnimations = m.runningRowItemsAnimations[key]
+
+		if runningRowItemAnimations["xOffset"] <> invalid then
+			rowItemNode = runningRowItemAnimations["xOffset"].node
+			animateTo = runningRowItemAnimations["xOffset"].animateTo
+
+			m.rowsNeedingHorizontalTranslationUpdate[rowItemNode.rowIndex.toStr()] = true
+
+			currentXOffset = rowItemNode.xOffset
+			if animateTo < currentXOffset then
+				newXOffset = currentXOffset - changeAmount
+				if newXOffset < animateTo then
+					newXOffset = animateTo
+					runningRowItemAnimations.delete("xOffset")
+				end if
+
+				rowItemNode.xOffset = newXOffset
+			else if animateTo > currentXOffset then
+				newXOffset = currentXOffset + changeAmount
+				if newXOffset > animateTo then
+					newXOffset = animateTo
+					runningRowItemAnimations.delete("xOffset")
+				end if
+
+				rowItemNode.xOffset = newXOffset
+			else
+				runningRowItemAnimations.delete("xOffset")
+			end if
+		end if
+
+		if runningRowItemAnimations["yOffset"] <> invalid then
+			rowItemNode = runningRowItemAnimations["yOffset"].node
+			animateTo = runningRowItemAnimations["yOffset"].animateTo
+
+			m.rowsNeedingHorizontalTranslationUpdate[rowItemNode.rowIndex.toStr()] = true
+
+			currentYOffset = rowItemNode.yOffset
+			if animateTo < currentYOffset then
+				newYOffset = currentYOffset - changeAmount
+				if newYOffset < animateTo then
+					newYOffset = animateTo
+					runningRowItemAnimations.delete("yOffset")
+				end if
+
+				rowItemNode.yOffset = newYOffset
+			else if animateTo > currentYOffset then
+				newYOffset = currentYOffset + changeAmount
+				if newYOffset > animateTo then
+					newYOffset = animateTo
+					runningRowItemAnimations.delete("yOffset")
+				end if
+
+				rowItemNode.yOffset = newYOffset
+			else
+				runningRowItemAnimations.delete("yOffset")
+			end if
+		end if
+
+		if runningRowItemAnimations.count() = 0 then
+			m.runningRowItemsAnimations.delete(key)
+		end if
+	end for
+
+	isAllRowItemAnimationsCompleted = (m.runningRowItemsAnimations.count() = 0)
+
+	' Now that we have adjusted all our data go ahead and check what translations we need to update due to the changes we made
+	if m.rowsNeedingHorizontalTranslationUpdate.count() > 0 then
+		for each rowIndex in m.rowsNeedingHorizontalTranslationUpdate
+			updateRowItemTranslations(rowIndex.toInt())
+		end for
+
+		m.rowsNeedingHorizontalTranslationUpdate = {}
+	end if
+
+	if m.gridNeedsVerticalTranslationUpdate then
+		for i = m.currentRowIndex to m.gridRowItemsContainerNodes.count() - 2
+			currentGridRowNodeYTranslation = m.gridRowNodes[i].translation[1]
+
+			nextGridRowNode = m.gridRowNodes[i + 1]
+			totalYOffset = m.gridRowItemsContainerNodes[i].yOffset
+
+			headerNode = m.gridRowHeaderNodes[i]
+			if headerNode <> invalid then
+				totalYOffset = totalYOffset + headerNode.height
+			end if
+
+			nextGridRowNode.translation = [nextGridRowNode.translation[0], currentGridRowNodeYTranslation + totalYOffset]
+		end for
+	end if
+
+	' Calculate our rowFocusPercent and rowHasFocus
+	if shouldUpdateRowFocusPercent then
+		' t = createObject("roTimespan")
+		gridVerticalScrollVerticalTranslation = m.gridVerticalScroll.translation[1] - m.focusYOffset
+
+		for each rowIndex in m.renderedRows
+			' Possibly revisit in the future. Using current rowIndex for focus percent calculations makes things simpler but focus percent will be different than the actual with different size items
+			rowIndexInt = rowIndex.toInt()
+			rowNode = m.gridRowNodes[rowIndexInt]
+			rowVerticalTranslation = rowNode.translation[1]
+
+			previousRowFocusOffsetPercentage = m.rowFocusPercents[rowIndex]
+
+			' gridVerticalScrollVerticalTranslation is negative so we add to get the difference
+			difference = gridVerticalScrollVerticalTranslation + rowVerticalTranslation
+			' print "Row " rowIndex " vertical translation difference from focus: " difference
+
+			focusFieldUpdates = []
+
+			if difference = 0 then
+				if previousRowFocusOffsetPercentage <> 1 then
+				' 	' Row was not fully focused before so need to update to fully focused
+					m.rowFocusPercents[rowIndex] = 1
+					rowFocusPercentUpdate = 1
+					focusFieldUpdates.push(["rowFocusPercent", 1])
+					focusFieldUpdates.push(["rowHasFocus", true])
+				end if
+			else
+				gridRowItemsContainerNode = m.gridRowItemsContainerNodes[rowIndexInt]
+
+				rowHeight = gridRowItemsContainerNode.yOffset
+
+				gridRowHeaderNode = m.gridRowHeaderNodes[rowIndexInt]
+				if gridRowHeaderNode <> invalid then
+					rowHeight = rowHeight + gridRowHeaderNode.height
+				end if
+
+				rowFocusPercent = 1 + (difference / rowHeight)
+				if rowFocusPercent < 0 then
+					rowFocusPercent = 0
+				else if rowFocusPercent > 2 then
+					rowFocusPercent = 2
+				end if
+
+				if previousRowFocusOffsetPercentage <> rowFocusPercent then
+					m.rowFocusPercents[rowIndex] = rowFocusPercent
+					focusFieldUpdates.push(["rowFocusPercent", rowFocusPercent])
+					if previousRowFocusOffsetPercentage = 1 then
+						focusFieldUpdates.push(["rowHasFocus", false])
+					end if
+				end if
+			end if
+
+			if focusFieldUpdates.isEmpty() = false then
+				for each rowKey in m.renderedRows
+					for each rowItemIndex in m.renderedRows[rowKey]
+						rowItemNode = m.renderedRows[rowKey][rowItemIndex]
+						if rowItemNode = invalid then
+							print "Row item node invalid for row " rowKey " item " rowItemIndex
+							continue for
+						end if
+
+						for each focusFieldUpdate in focusFieldUpdates
+							conditionallySetField(rowItemNode, focusFieldUpdate[0], focusFieldUpdate[1])
+						end for
+					end for
+				end for
+			end if
+		end for
+		' print "calculate rowFocusPercent and rowHasFocus took:" ; t.totalMicroseconds() / 1000000
+	end if
+
+	if shouldUpdateFocusPercent then
+		' t = createObject("roTimespan")
+		' Update focus percent values for current row
+		rowItems = m.renderedRows[currentRowIndex.toStr()]
+
+		for each rowItemIndex in rowItems
+			rowItemNode = rowItems[rowItemIndex]
+			difference = calculateHorizontalTranslationDifference(rowItemNode, false)
+
+			' Possibly revisit in the future. Using current rowItemIndex for focus percent calculations makes things simpler but focus percent will be different than the actual with different size items
+			focusPercent = 1 + (difference / rowItemNode.xOffset)
+			if focusPercent < 0 then
+				focusPercent = 0
+			else if focusPercent > 2 then
+				focusPercent = 2
+			end if
+
+			previousFocusPercent = m.currentRowFocusPercents[rowItemIndex]
+			if previousFocusPercent <> focusPercent then
+				' print "Row " currentRowIndex " item " rowItemIndex " horizontal translation difference from focus: " difference " focusPercent: " focusPercent
+				m.currentRowFocusPercents[rowItemIndex] = focusPercent
+				conditionallySetField(rowItemNode, "focusPercent", focusPercent)
+
+				if focusPercent = 1 then
+					conditionallySetField(rowItemNode, "itemHasFocus", true)
+				else if previousFocusPercent = 1 then
+					conditionallySetField(rowItemNode, "itemHasFocus", false)
+				end if
+			end if
+		end for
+		' print "calculate rowFocusPercent and rowHasFocus took:" ; t.totalMicroseconds() / 1000000
+	end if
+
+	allAnimationsCompleted = isFocusFeedbackAnimationCompleted AND isGridVerticalScrollTranslationYAnimationCompleted AND isCurrentFocusedRowItemTranslationXAnimationCompleted AND isAllRowItemAnimationsCompleted
+
+	' We are using control for knowing if the timer is already running so need to set it to stop so conditionallyStartAnimationTimer restarts properly
+	m.animationTimer.control = "stop"
+
 	if allAnimationsCompleted = false then
-		startAnimationTimer()
+		conditionallyStartAnimationTimer()
 	else
 		' Do one final cleanup
 		recycleOffscreenNodes()
 	end if
+end sub
+
+
+function animateFocusFeedback(changeAmount) as Boolean
+	isFocusFeedbackWidthAnimationCompleted = true
+	currentFocusFeedbackWidth = m.focusFeedback.width
+	animateTo = m.focusFeedbackWidthAnimateTo
+	if animateTo > currentFocusFeedbackWidth then
+		newWidth = currentFocusFeedbackWidth + changeAmount
+		if newWidth > animateTo then
+			newWidth = animateTo
+		else
+			isFocusFeedbackWidthAnimationCompleted = false
+		end if
+
+		' print "Focus feedback width animation newWidth " newWidth " animateTo: " animateTo
+
+		m.focusFeedback.width = newWidth
+	else if animateTo < currentFocusFeedbackWidth then
+		newWidth = currentFocusFeedbackWidth - changeAmount
+		if newWidth < animateTo then
+			newWidth = animateTo
+		else
+			isFocusFeedbackWidthAnimationCompleted = false
+		end if
+
+		' print "Focus feedback width animation newWidth " newWidth " animateTo: " animateTo
+
+		m.focusFeedback.width = newWidth
+	else
+		' print "Focus feedback width animation completed"
+	end if
+
+	isFocusFeedbackHeightAnimationCompleted = true
+	currentFocusFeedbackHeight = m.focusFeedback.height
+	animateTo = m.focusFeedbackHeightAnimateTo
+	if animateTo > currentFocusFeedbackHeight then
+		newHeight = currentFocusFeedbackHeight + changeAmount
+		if newHeight > animateTo then
+			newHeight = animateTo
+		else
+			isFocusFeedbackHeightAnimationCompleted = false
+		end if
+
+		' print "Focus feedback height animation newHeight " newHeight " animateTo: " animateTo
+
+		m.focusFeedback.height = newHeight
+	else if animateTo < currentFocusFeedbackHeight then
+		' print "Focus feedback height animation run 2"
+		newHeight = currentFocusFeedbackHeight - changeAmount
+		if newHeight < animateTo then
+			newHeight = animateTo
+		else
+			isFocusFeedbackHeightAnimationCompleted = false
+		end if
+
+		' print "Focus feedback height animation newHeight " newHeight " animateTo: " animateTo
+
+		m.focusFeedback.height = newHeight
+	else
+		' print "Focus feedback height animation completed"
+	end if
+
+	isFocusFeedbackTranslationYAnimationCompleted = true
+	animateTo = m.focusFeedbackTranslationYAnimateTo
+	currentFocusFeedbackYTranslation = m.focusFeedback.translation[1]
+	if animateTo < currentFocusFeedbackYTranslation then
+		newTranslationY = currentFocusFeedbackYTranslation - changeAmount
+		if newTranslationY < animateTo then
+			newTranslationY = animateTo
+		else
+			isFocusFeedbackTranslationYAnimationCompleted = false
+		end if
+
+		' print "Focus feedback Y translation animation newTranslationY " newTranslationY " animateTo: " animateTo
+
+		m.focusFeedback.translation = [m.focusFeedback.translation[0], newTranslationY]
+	else if animateTo > currentFocusFeedbackYTranslation then
+		newTranslationY = currentFocusFeedbackYTranslation + changeAmount
+		if newTranslationY > animateTo then
+			newTranslationY = animateTo
+		else
+			isFocusFeedbackTranslationYAnimationCompleted = false
+		end if
+
+		' print "Focus feedback Y translation animation newTranslationY " newTranslationY " animateTo: " animateTo
+
+		m.focusFeedback.translation = [m.focusFeedback.translation[0], newTranslationY]
+	else
+		' print "Focus Feedback Y translation animation completed"
+	end if
+
+	return isFocusFeedbackHeightAnimationCompleted AND isFocusFeedbackWidthAnimationCompleted AND isFocusFeedbackTranslationYAnimationCompleted
+end function
+
+
+sub updateRowItemTranslations(rowIndex as Integer)
+	renderedRowItems = m.renderedRows[rowIndex.toStr()]
+	if renderedRowItems = invalid then
+		print "No rendered row items at index" rowIndex
+		return
+	end if
+
+	currentlyFocusedItemIndex = m.lastFocusedItemIndexByRow[rowIndex]
+	if currentlyFocusedItemIndex = -1 then
+		print "No currently focused item index for row " rowIndex
+		stop
+		return
+	end if
+
+	focusedRowItemNode = renderedRowItems[currentlyFocusedItemIndex.toStr()]
+	if focusedRowItemNode = invalid then
+		print "Focused row item node invalid for row " rowIndex " item " currentlyFocusedItemIndex
+		stop
+		return
+	end if
+
+	' For items before the currently focused item we need to subtract the xOffset changes from the item to the right of it recursively to get the new translation
+	lastRowItemNode = focusedRowItemNode
+	for i = currentlyFocusedItemIndex - 1 to m.rowsRenderedNodesRanges[rowIndex].start step -1
+		currentRowItemNode = renderedRowItems[i.toStr()]
+		if currentRowItemNode = invalid then
+			print "Row item node invalid for row " rowIndex " item " i
+			stop
+			continue for
+		end if
+
+		xTranslation = lastRowItemNode.translation[0] - currentRowItemNode.xOffset
+
+		' print "Peak: Updating x translation for row " rowIndex " item " i " to " xTranslation
+		currentRowItemNode.translation = [xTranslation, currentRowItemNode.translation[1]]
+
+		lastRowItemNode = currentRowItemNode
+	end for
+
+	' For items after the currently focused item we need to add the xOffset changes from the item to the left of it recursively to get the new translation
+	lastRowItemNode = focusedRowItemNode
+	for i = currentlyFocusedItemIndex + 1 to m.rowsRenderedNodesRanges[rowIndex].end
+		currentRowItemNode = renderedRowItems[i.toStr()]
+		if currentRowItemNode = invalid then
+			print "Row item node invalid for row " rowIndex " item " i
+			stop
+			continue for
+		end if
+
+		xTranslation = lastRowItemNode.translation[0] + lastRowItemNode.xOffset
+
+		currentRowItemNode.translation = [xTranslation, currentRowItemNode.translation[1]]
+		' print "Updating x translation for row " rowIndex " item " i " to " xTranslation
+		lastRowItemNode = currentRowItemNode
+	end for
 end sub
 
 
@@ -755,6 +1293,10 @@ sub onContentSuppliedMessageReceived(rows, msgInfo)
 		' end if
 
 		m.gridRowNodes[rowIndex] = rowNode
+
+		if m.rowsRenderedNodesRanges[rowIndex] = invalid then
+			m.rowsRenderedNodesRanges[rowIndex] = { "start": -1, "end": -1 }
+		end if
 
 		m.gridVerticalScroll.appendChild(rowNode)
 		rowIndex++
@@ -797,6 +1339,23 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 		return false
 	end if
 
+	if rowIndex <> m.currentRowIndex then
+		previousFocusedRowRenderedRowItems = m.renderedRows[m.currentRowIndex.toStr()]
+		for each key in previousFocusedRowRenderedRowItems
+			previousFocusedRowRenderedRowItem = previousFocusedRowRenderedRowItems[key]
+		end for
+
+		nextFocusedRowRenderedRowItems = m.renderedRows[rowIndex.toStr()]
+		for each key in nextFocusedRowRenderedRowItems
+			nextFocusedRowRenderedRowItem = nextFocusedRowRenderedRowItems[key]
+		end for
+	else
+		currentFocusedRowRenderedRowItems = m.renderedRows[rowIndex.toStr()]
+		for each key in currentFocusedRowRenderedRowItems
+			currentFocusedRowRenderedRowItem = currentFocusedRowRenderedRowItems[key]
+		end for
+	end if
+
 	m.currentRowIndex = rowIndex
 	m.lastFocusedItemIndexByRow[rowIndex] = rowItemIndex
 
@@ -804,7 +1363,6 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 	m.focusFeedbackHeightAnimateTo = rowItemNode.height
 
 	m.gridVerticalScrollTranslationYAnimateTo = -m.gridRowNodes[rowIndex].translation[1] + m.focusYOffset
-	m.focusedRowTranslationXAnimateTo = -rowItemNode.translation[0]
 
 	gridRowNode = m.gridRowNodes[rowIndex]
 
@@ -816,13 +1374,12 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 
 	m.focusFeedbackTranslationYAnimateTo = currentRowHeaderHeight + m.focusYOffset
 
-	startAnimationTimer()
+	conditionallyStartAnimationTimer()
 
-	' TODO decide if we need to move this
 	rowItemNode.setFocus(true)
 
 	' Next go ahead and cleanup any nodes that are currently outside the renderer area due to this navigation
-	recycleOffscreenNodes()
+	' recycleOffscreenNodes()
 
 	' Go ahead and start the offscreen node timer to allow new nodes to be created for the content that is now in the rendered area but not on screen yet
 	m.offscreenNodesTimer.control = "start"
@@ -912,7 +1469,7 @@ sub addGridContent()
 			}
 			items: [
 				{ "title": "Avatar The Way of Water", "imageUrl": "https://picsum.photos/seed/avatar-the-way-of-water" },
-				{ "componentName": "GridItemRenderer", "title": "Top Gun Maverick", "imageUrl": "https://picsum.photos/seed/top-gun-maverick" },
+				{ "title": "Top Gun Maverick", "imageUrl": "https://picsum.photos/seed/top-gun-maverick" },
 				{ "title": "Avengers Endgame", "imageUrl": "https://picsum.photos/seed/avengers-endgame" },
 				{ "title": "Black Panther Wakanda Forever", "imageUrl": "https://picsum.photos/seed/black-panther-wakanda-forever" },
 				{ "title": "Spider-Man No Way Home", "imageUrl": "https://picsum.photos/seed/spider-man-no-way-home" },
@@ -1066,7 +1623,7 @@ sub addGridContent()
 			idx = 0
 			for each item in row.items
 				if (idx mod 2) = 1 then
-					item.componentName = "GridItemRenderer2"
+					' item.componentName = "GridItemRenderer2"
 				end if
 				idx = idx + 1
 			end for
