@@ -15,12 +15,15 @@
 		<field id="height" type="integer" />
 		<field id="focusXOffset" type="integer" />
 		<field id="focusYOffset" type="integer" />
-		<field id="focusBitmapUri" alias="focusFeedback.uri" />
+		<field id="focusBitmapUri" type="uri" />
+		<field id="focusBitmapBlendColor" type="color" />
+		<field id="focusFootprintBitmapUri" type="uri" />
+		<field id="focusFootprintBlendColor" type="color" />
 
 		<field id="renderedRowsRef" type="assocarray" />
 	</interface>
 	<children>
 		<Group id="gridVerticalScroll" />
-		<Poster id="focusFeedback" focusable="false" visible="false" />
+		<Poster id="focusFeedback" focusable="false" />
 	</children>
 </component>

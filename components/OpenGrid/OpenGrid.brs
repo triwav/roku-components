@@ -6,6 +6,8 @@ sub init()
 	m.top.width = m.width
 	m.top.height = m.height
 
+	updateClippingRect()
+
 	' How much extra we want to render to the left and right of the onscreen content for the focused row
 	m.extraWidthToRenderFocusedRow = m.width * 0.5
 
@@ -67,13 +69,21 @@ sub init()
 	m.top.observeFieldScoped("focusXOffset", "onFocusXOffsetChanged")
 	m.top.observeFieldScoped("focusYOffset", "onFocusYOffsetChanged")
 	m.top.observeFieldScoped("focusedChild", "onFocusedChildChanged")
+	m.top.observeFieldScoped("focusBitmapUri", "updateFocusFeedbackState")
+	m.top.observeFieldScoped("focusBitmapBlendColor", "updateFocusFeedbackState")
+	m.top.observeFieldScoped("focusFootprintBitmapUri", "updateFocusFeedbackState")
+	m.top.observeFieldScoped("focusFootprintBlendColor", "updateFocusFeedbackState")
 
-	m.animationRate = 1400 / 1000000 ' Pixels per microsecond
+	m.animationRate = 1800 / 1000000 ' Pixels per microsecond
 
 	m.animationTimer = createObject("roSGNode", "Timer")
 	m.animationTimer.duration = 0.001
 	m.animationTimer.observeField("fire", "onAnimationTimerFired")
 	m.animationTickTimeSpan = createObject("roTimespan")
+
+	m.keyHoldTimer = createObject("roSGNode", "Timer")
+	m.keyHoldTimer.duration = 0.8
+	m.keyHoldTimer.observeField("fire", "onKeyHoldTimerFired")
 
 	m.focusFeedbackTranslationYAnimateTo = 0
 	m.focusFeedbackWidthAnimateTo = 0
@@ -92,13 +102,31 @@ sub init()
 end sub
 
 
+sub updateFocusFeedbackState()
+	if m.top.isInFocusChain() = true then
+		m.focusFeedback.blendColor = m.top.focusBitmapBlendColor
+		m.focusFeedback.uri = m.top.focusBitmapUri
+	else
+		m.focusFeedback.blendColor = m.top.focusFootprintBlendColor
+		m.focusFeedback.uri = m.top.focusFootprintBitmapUri
+	end if
+end sub
+
+
 sub onWidthChanged()
 	m.width = m.top.width
+	updateClippingRect()
 end sub
 
 
 sub onHeightChanged()
 	m.height = m.top.height
+	updateClippingRect()
+end sub
+
+
+sub updateClippingRect()
+	m.top.clippingRect = [0, 0, m.width, m.height]
 end sub
 
 
@@ -126,6 +154,7 @@ end sub
 
 
 sub onFocusedChildChanged()
+	' TODO need to properly assign focus to the child
 	updatedFocus = false
 	if m.top.hasFocus() = true then
 		m.gridHasFocus = true
@@ -136,6 +165,7 @@ sub onFocusedChildChanged()
 	end if
 
 	if updatedFocus = true then
+		updateFocusFeedbackState()
 		for each rowIndex in m.renderedRows
 			for each itemIndex in m.renderedRows[rowIndex]
 				renderedNode = m.renderedRows[rowIndex][itemIndex]
@@ -159,7 +189,7 @@ end function
 
 
 ' Creates nodes that are needed for content around the focused index.
-sub createOnscreenNodes(focusedRowIndex as integer, focusedRowItemIndex as integer)
+sub createOnscreenNodes(focusedRowIndex as Integer, focusedRowItemIndex as Integer)
 	' IMPROVEMENT Add optimization to only try to create nodes for the row that changed
 
 	if focusedRowIndex < 0 then
@@ -420,7 +450,7 @@ sub recycleOffscreenNodes()
 			end for
 
 			renderedRows.delete(rowIndex)
-			m.rowsRenderedNodesRanges[rowIndex.toInt()] = {"start": -1, "end": -1}
+			m.rowsRenderedNodesRanges[rowIndex.toInt()] = { "start": -1, "end": -1 }
 
 			continue for
 		end if
@@ -613,7 +643,7 @@ function conditionallyCreateNodeAndAssignContent(rowIndex as Integer, rowItemInd
 				print "Node for row " rowIndex " item " rowItemIndex " with componentName: " + itemComponentName + " does not have required rowItemIndex field"
 				return invalid
 			end if
-		endif
+		end if
 	end if
 
 	if rowItemNode = invalid then
@@ -1009,9 +1039,8 @@ sub onAnimationTimerFired()
 
 			if difference = 0 then
 				if previousRowFocusOffsetPercentage <> 1 then
-				' 	' Row was not fully focused before so need to update to fully focused
+					' 	' Row was not fully focused before so need to update to fully focused
 					m.rowFocusPercents[rowIndex] = 1
-					rowFocusPercentUpdate = 1
 					focusFieldUpdates.push(["rowFocusPercent", 1])
 					focusFieldUpdates.push(["rowHasFocus", true])
 				end if
@@ -1273,12 +1302,12 @@ sub onContentSuppliedMessageReceived(rows, msgInfo)
 		' 	previousRowIndex = rowIndex
 		' 	isUpdate = true
 		' else
-			rowNode = createObject("roSGNode", "Group")
-			m.lastFocusedItemIndexByRow[rowIndex] = 0
+		rowNode = createObject("roSGNode", "Group")
+		m.lastFocusedItemIndexByRow[rowIndex] = 0
 
-			previousRowIndex = previousRowIndex + 1
-			rowIndex = previousRowIndex
-			isUpdate = false
+		previousRowIndex = previousRowIndex + 1
+		rowIndex = previousRowIndex
+		isUpdate = false
 		' end if
 
 		m.gridRowNodes[rowIndex] = rowNode
@@ -1298,7 +1327,7 @@ end sub
 
 ' Navigate to a specific row and item index
 ' Returns true if navigation was successful, false if not (out of bounds or no composition loaded)
-Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as boolean
+function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer) as Boolean
 	rowContent = m.gridContent[rowIndex]
 	if rowContent = invalid then
 		print "No content for row at index" rowIndex
@@ -1328,22 +1357,22 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 		return false
 	end if
 
-	if rowIndex <> m.currentRowIndex then
-		previousFocusedRowRenderedRowItems = m.renderedRows[m.currentRowIndex.toStr()]
-		for each key in previousFocusedRowRenderedRowItems
-			previousFocusedRowRenderedRowItem = previousFocusedRowRenderedRowItems[key]
-		end for
+	' if rowIndex <> m.currentRowIndex then
+	' 	previousFocusedRowRenderedRowItems = m.renderedRows[m.currentRowIndex.toStr()]
+	' 	for each key in previousFocusedRowRenderedRowItems
+	' 		previousFocusedRowRenderedRowItem = previousFocusedRowRenderedRowItems[key]
+	' 	end for
 
-		nextFocusedRowRenderedRowItems = m.renderedRows[rowIndex.toStr()]
-		for each key in nextFocusedRowRenderedRowItems
-			nextFocusedRowRenderedRowItem = nextFocusedRowRenderedRowItems[key]
-		end for
-	else
-		currentFocusedRowRenderedRowItems = m.renderedRows[rowIndex.toStr()]
-		for each key in currentFocusedRowRenderedRowItems
-			currentFocusedRowRenderedRowItem = currentFocusedRowRenderedRowItems[key]
-		end for
-	end if
+	' 	nextFocusedRowRenderedRowItems = m.renderedRows[rowIndex.toStr()]
+	' 	for each key in nextFocusedRowRenderedRowItems
+	' 		nextFocusedRowRenderedRowItem = nextFocusedRowRenderedRowItems[key]
+	' 	end for
+	' else
+	' 	currentFocusedRowRenderedRowItems = m.renderedRows[rowIndex.toStr()]
+	' 	for each key in currentFocusedRowRenderedRowItems
+	' 		currentFocusedRowRenderedRowItem = currentFocusedRowRenderedRowItems[key]
+	' 	end for
+	' end if
 
 	m.currentRowIndex = rowIndex
 	m.lastFocusedItemIndexByRow[rowIndex] = rowItemIndex
@@ -1352,8 +1381,6 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 	m.focusFeedbackHeightAnimateTo = rowItemNode.height
 
 	m.gridVerticalScrollTranslationYAnimateTo = -m.gridRowNodes[rowIndex].translation[1] + m.focusYOffset
-
-	gridRowNode = m.gridRowNodes[rowIndex]
 
 	currentRowHeaderHeight = 0
 	header = m.gridRowHeaderNodes[rowIndex]
@@ -1374,10 +1401,10 @@ Function navigateToRowItem(rowIndex as integer, rowItemIndex as integer) as bool
 	m.offscreenNodesTimer.control = "start"
 
 	return true
-End Function
+end function
 
 
-Function navigateToRow(rowIndex as integer) as boolean
+function navigateToRow(rowIndex as Integer) as Boolean
 	currentItemIndex = m.lastFocusedItemIndexByRow[rowIndex]
 
 	if currentItemIndex = invalid then
@@ -1386,10 +1413,10 @@ Function navigateToRow(rowIndex as integer) as boolean
 	end if
 
 	return navigateToRowItem(rowIndex, currentItemIndex)
-End Function
+end function
 
 
-Function navigateToRelativeRowItem(rowIndex as integer, itemIndexOffset as integer) as boolean
+function navigateToRelativeRowItem(rowIndex as Integer, itemIndexOffset as Integer) as Boolean
 	currentItemIndex = m.lastFocusedItemIndexByRow[rowIndex]
 
 	if currentItemIndex = invalid then
@@ -1400,21 +1427,38 @@ Function navigateToRelativeRowItem(rowIndex as integer, itemIndexOffset as integ
 	newItemIndex = currentItemIndex + itemIndexOffset
 
 	return navigateToRowItem(rowIndex, newItemIndex)
-End Function
+end function
 
 
-Function onKeyEvent(key as string, press as boolean) as boolean
-	if press = false then return false
+function onKeyHoldTimerFired()
+	' After initial key press we want to speed up the navigation so reduce the timer duration and trigger another key event with the same key to navigate again
+	m.keyHoldTimer.duration = 0.3
+	onKeyEvent(m.keyHoldTimer.id, true)
+end function
+
+
+function onKeyEvent(key as String, press as Boolean) as Boolean
+	' Using existing id field for simplicity
+	m.keyHoldTimer.id = key
+
+	if press = false then
+		' User released the key so reset the timer duration and stop it from triggering more events until the next key press
+		m.keyHoldTimer.duration = 0.8
+		m.keyHoldTimer.control = "stop"
+		return false
+	end if
+
+	m.keyHoldTimer.control = "start"
+
 	if key = "up" then
-		navigateToRow(m.currentRowIndex - 1)
+		return navigateToRow(m.currentRowIndex - 1)
 	else if key = "down" then
-		navigateToRow(m.currentRowIndex + 1)
+		return navigateToRow(m.currentRowIndex + 1)
 	else if key = "left" then
-		navigateToRelativeRowItem(m.currentRowIndex, -1)
+		return navigateToRelativeRowItem(m.currentRowIndex, -1)
 	else if key = "right" then
-		navigateToRelativeRowItem(m.currentRowIndex, 1)
+		return navigateToRelativeRowItem(m.currentRowIndex, 1)
 	else
 		return false
 	end if
-	return true
-End Function
+end function
