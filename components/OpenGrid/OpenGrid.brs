@@ -20,6 +20,8 @@ sub init()
 	' Variable default setup
 	m.currentRowIndex = 0
 
+	m.currentRowHeaderIsFocused = false
+
 	' Map of last-focused item index per row (keyed by row index)
 	m.lastFocusedItemIndexByRow = []
 
@@ -48,6 +50,7 @@ sub init()
 
 	m.availableRecycledNodes = {}
 
+	' bs:disable-next-line 1129
 	m.renderThreadQueue = createObject("roRenderThreadQueue")
 	contentQueueId = "OGContentSuppliedQueue:" + createObject("roDeviceInfo").getRandomUUID()
 
@@ -163,11 +166,16 @@ end sub
 
 
 sub onFocusedChildChanged()
-	' TODO need to properly assign focus to the child
 	updatedFocus = false
 	if m.top.hasFocus() = true then
 		m.gridHasFocus = true
 		updatedFocus = true
+
+		if m.currentRowHeaderIsFocused then
+			focusHeader(m.gridRowHeaderNodes[m.currentRowIndex])
+		else if m.lastFocusedItemIndexByRow.count() > 0 then
+			navigateToRowItem(m.currentRowIndex, m.lastFocusedItemIndexByRow[m.currentRowIndex])
+		end if
 	else if m.top.isInFocusChain() = false then
 		m.gridHasFocus = false
 		updatedFocus = true
@@ -276,8 +284,9 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 	' HEADER START
 	headerHeight = 0
 	rowHeaderNode = m.gridRowHeaderNodes[rowIndex]
-	if rowHeaderNode = invalid AND rowConfig.header <> invalid then
-		componentName = rowConfig.header.componentName
+	headerConfig = rowConfig.header
+	if rowHeaderNode = invalid AND headerConfig <> invalid then
+		componentName = headerConfig.componentName
 		if componentName = invalid then
 			conditionallyThrow("No header componentName included for row " + rowIndex.toStr())
 		else
@@ -287,11 +296,11 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		if rowHeaderNode = invalid then
 			conditionallyThrow("Failed to create header component: " + componentName)
 		else
-			headerConfig = rowConfig.header
+
 			' Check if the header is focusable or not. If not then mark it as not focusable
 			rowHeaderNode.focusable = (headerConfig.isFocusable = true)
 
-			rowHeaderNode.setRef("content", rowConfig.header)
+			rowHeaderNode.setRef("content", rowConfig)
 			rowHeaderNode.contentUpdated = true
 			if rowHeaderNode.height = invalid then
 				conditionallyThrow("Header node for row " + rowIndex.toStr() + " does not have a height field")
@@ -715,14 +724,17 @@ end sub
 
 ' Throws an exception when running sideloaded (dev mode) to surface bugs during development.
 ' In production this is a no-op so the app can attempt to continue without crashing.
-sub conditionallyThrow(message as String)
+function conditionallyThrow(message as String)
 	if createObject("roAppInfo").isDev() then
 		throw message
 	end if
-end sub
+
+	return invalid
+end function
 
 
 sub onRowItemXOffsetChanged(msg)
+
 	rowItem = msg.getRoSgNode()
 
 	m.rowsNeedingHorizontalTranslationUpdate[rowItem.rowIndex.toStr()] = true
@@ -1047,9 +1059,20 @@ sub onAnimationTimerFired()
 		' t = createObject("roTimespan")
 		gridVerticalScrollVerticalTranslation = m.gridVerticalScroll.translation[1] - m.focusYOffset
 
+		hasCalculatedFocusRow = false
+
+		' AA keys can be in any order and we need to go in a deterministic order so we need to convert to a sorted array
+		renderedRowsIndexes = []
 		for each rowIndex in m.renderedRows
+			renderedRowsIndexes.push(rowIndex.toInt())
+		end for
+		renderedRowsIndexes.sort()
+
+		lastRowPercentage = 0
+
+		for each rowIndexInt in renderedRowsIndexes
 			' Possibly revisit in the future. Using current rowIndex for focus percent calculations makes things simpler but focus percent will be different than the actual with different size items
-			rowIndexInt = rowIndex.toInt()
+			rowIndex = rowIndexInt.toStr()
 			rowNode = m.gridRowNodes[rowIndexInt]
 			rowVerticalTranslation = rowNode.translation[1]
 
@@ -1057,7 +1080,6 @@ sub onAnimationTimerFired()
 
 			' gridVerticalScrollVerticalTranslation is negative so we add to get the difference
 			difference = gridVerticalScrollVerticalTranslation + rowVerticalTranslation
-			' print "Row " rowIndex " vertical translation difference from focus: " difference
 
 			focusFieldUpdates = []
 
@@ -1067,6 +1089,11 @@ sub onAnimationTimerFired()
 					m.rowFocusPercents[rowIndex] = 1
 					focusFieldUpdates.push(["rowFocusPercent", 1])
 					focusFieldUpdates.push(["rowHasFocus", true])
+
+					if hasCalculatedFocusRow = false then
+						hasCalculatedFocusRow = true
+						m.top.currFocusRow = rowIndexInt
+					end if
 				end if
 			else
 				gridRowItemsContainerNode = m.gridRowItemsContainerNodes[rowIndexInt]
@@ -1078,7 +1105,17 @@ sub onAnimationTimerFired()
 					rowHeight = rowHeight + gridRowHeaderNode.height
 				end if
 
-				rowFocusPercent = 1 + (difference / rowHeight)
+				' Will be negative if above the focus area and positive if below the focus area
+				percentage = (difference / rowHeight)
+
+				if hasCalculatedFocusRow = false AND difference > 0 then
+					hasCalculatedFocusRow = true
+					m.top.currFocusRow = rowIndexInt - 1 + lastRowPercentage * -1
+				end if
+
+				lastRowPercentage = percentage
+
+				rowFocusPercent = 1 + percentage
 				if rowFocusPercent < 0 then
 					rowFocusPercent = 0
 				else if rowFocusPercent > 2 then
@@ -1086,6 +1123,7 @@ sub onAnimationTimerFired()
 				end if
 
 				if previousRowFocusOffsetPercentage <> rowFocusPercent then
+					' TODO need to handle when we create nodes as well
 					m.rowFocusPercents[rowIndex] = rowFocusPercent
 					focusFieldUpdates.push(["rowFocusPercent", rowFocusPercent])
 					if previousRowFocusOffsetPercentage = 1 then
@@ -1095,17 +1133,15 @@ sub onAnimationTimerFired()
 			end if
 
 			if focusFieldUpdates.isEmpty() = false then
-				for each rowKey in m.renderedRows
-					for each rowItemIndex in m.renderedRows[rowKey]
-						rowItemNode = m.renderedRows[rowKey][rowItemIndex]
-						if rowItemNode = invalid then
-							print "Row item node invalid for row " rowKey " item " rowItemIndex
-							continue for
-						end if
+				for each rowItemIndex in m.renderedRows[rowIndex]
+					rowItemNode = m.renderedRows[rowIndex][rowItemIndex]
+					if rowItemNode = invalid then
+						print "Row item node invalid for row " rowIndex " item " rowItemIndex
+						continue for
+					end if
 
-						for each focusFieldUpdate in focusFieldUpdates
-							conditionallySetField(rowItemNode, focusFieldUpdate[0], focusFieldUpdate[1])
-						end for
+					for each focusFieldUpdate in focusFieldUpdates
+						conditionallySetField(rowItemNode, focusFieldUpdate[0], focusFieldUpdate[1])
 					end for
 				end for
 			end if
@@ -1130,6 +1166,7 @@ sub onAnimationTimerFired()
 				focusPercent = 2
 			end if
 
+			' TODO need to handle when we create nodes as well
 			previousFocusPercent = m.currentRowFocusPercents[rowItemIndex]
 			if previousFocusPercent <> focusPercent then
 				' print "Row " currentRowIndex " item " rowItemIndex " horizontal translation difference from focus: " difference " focusPercent: " focusPercent
@@ -1143,7 +1180,7 @@ sub onAnimationTimerFired()
 				end if
 			end if
 		end for
-		' print "calculate rowFocusPercent and rowHasFocus took:" ; t.totalMicroseconds() / 1000000
+		' print "calculate focusPercent and itemHasFocus took:" ; t.totalMicroseconds() / 1000000
 	end if
 
 	allAnimationsCompleted = isFocusFeedbackAnimationCompleted AND isGridVerticalScrollTranslationYAnimationCompleted AND isCurrentFocusedRowItemTranslationXAnimationCompleted AND isAllRowItemAnimationsCompleted
@@ -1164,6 +1201,13 @@ function animateFocusFeedback(changeAmount) as Boolean
 	isFocusFeedbackWidthAnimationCompleted = true
 	currentFocusFeedbackWidth = m.focusFeedbackPoster.width
 	animateTo = m.focusFeedbackWidthAnimateTo
+
+	' If current width is 0 we just jump to the target width
+	if currentFocusFeedbackWidth = 0 then
+		currentFocusFeedbackWidth = animateTo
+		m.focusFeedbackPoster.width = animateTo
+	end if
+
 	if animateTo > currentFocusFeedbackWidth then
 		newWidth = currentFocusFeedbackWidth + changeAmount
 		if newWidth > animateTo then
@@ -1187,6 +1231,13 @@ function animateFocusFeedback(changeAmount) as Boolean
 	isFocusFeedbackHeightAnimationCompleted = true
 	currentFocusFeedbackHeight = m.focusFeedbackPoster.height
 	animateTo = m.focusFeedbackHeightAnimateTo
+
+	' If current height is 0 we just jump to the target height
+	if currentFocusFeedbackHeight = 0 then
+		currentFocusFeedbackHeight = animateTo
+		m.focusFeedbackPoster.height = animateTo
+	end if
+
 	if animateTo > currentFocusFeedbackHeight then
 		newHeight = currentFocusFeedbackHeight + changeAmount
 		if newHeight > animateTo then
@@ -1287,6 +1338,9 @@ end sub
 
 
 sub onContentSuppliedMessageReceived(rows, msgInfo)
+	m.gridVerticalScroll.removeChildren(m.gridVerticalScroll.getChildren(-1, 0))
+	m.gridContent = []
+
 	' TODO rewrite to support subsequent content updates instead of just initial load
 	previousRowIndex = -1
 	rowIndex = 0
@@ -1363,13 +1417,15 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer) as Bool
 
 	animateToRow(rowIndex)
 
+	m.currentRowHeaderIsFocused = false
+
 	rowItemNode.setFocus(true)
 
-	content = m.gridContent[rowIndex].items[rowItemIndex]
 	m.top.setRef("focusedRowItemInfo", {
 		"rowIndex": rowIndex
 		"rowItemIndex": rowItemIndex
-		"content": content
+		"content": rowItemContent
+		"rowContent": rowContent
 		"node": rowItemNode
 	})
 	m.top.focusedRowItemInfoChanged = true
@@ -1402,7 +1458,6 @@ function navigateToLastFocusedRowItem(rowIndex as Integer) as Boolean
 	currentItemIndex = m.lastFocusedItemIndexByRow[rowIndex]
 
 	if currentItemIndex = invalid then
-		print "No row at index" rowIndex
 		return false
 	end if
 
@@ -1414,7 +1469,6 @@ function navigateToRelativeRowItem(rowIndex as Integer, itemIndexOffset as Integ
 	currentItemIndex = m.lastFocusedItemIndexByRow[rowIndex]
 
 	if currentItemIndex = invalid then
-		print "No row at index" rowIndex
 		return false
 	end if
 
@@ -1426,7 +1480,7 @@ end function
 
 function onKeyHoldTimerFired()
 	' After initial key press we want to speed up the navigation so reduce the timer duration and trigger another key event with the same key to navigate again
-	m.keyHoldTimer.duration = 0.3
+	m.keyHoldTimer.duration = 0.25
 	onKeyEvent(m.keyHoldTimer.id, true)
 end function
 
@@ -1435,11 +1489,7 @@ function navigateUp()
 	' See if we have a focusable header that we need to switch focus to
 	headerNode = m.gridRowHeaderNodes[m.currentRowIndex]
 	if headerNode <> invalid AND headerNode.focusable = true AND headerNode.isInFocusChain() = false then
-		headerNode.setFocus(true)
-
-		' Need to hide the focus feedback since we are now focused on a header and not a row item
-		m.focusFeedback.visible = false
-
+		focusHeader(headerNode)
 		return true
 	end if
 
@@ -1448,10 +1498,19 @@ function navigateUp()
 end function
 
 
-function navigateDown()
-	' See if we have are currently focused on a header and if so we want to navigate to the current row instead of the next
+function isHeaderFocused() as Boolean
 	headerNode = m.gridRowHeaderNodes[m.currentRowIndex]
 	if headerNode <> invalid AND headerNode.isInFocusChain() = true then
+		return true
+	end if
+
+	return false
+end function
+
+
+function navigateDown()
+	' See if we have are currently focused on a header and if so we want to navigate to the current row instead of the next
+	if isHeaderFocused() then
 		m.focusFeedback.visible = true
 		return navigateToLastFocusedRowItem(m.currentRowIndex)
 	end if
@@ -1461,16 +1520,28 @@ function navigateDown()
 		' We need to move focus down to the next row and animate to it
 		m.currentRowIndex = m.currentRowIndex + 1
 		animateToRow(m.currentRowIndex)
-		nextRowHeaderNode.setFocus(true)
-
-		' Need to hide the focus feedback since we are now focused on a header and not a row item
-		m.focusFeedback.visible = false
+		focusHeader(nextRowHeaderNode)
 		return true
 	end if
 
 	m.focusFeedback.visible = true
 	return navigateToLastFocusedRowItem(m.currentRowIndex + 1)
 end function
+
+
+sub focusHeader(headerNode as Object)
+	m.currentRowHeaderIsFocused = true
+	headerNode.setFocus(true)
+
+	' Need to hide the focus feedback since we are now focused on a header and not a row item
+	m.focusFeedback.visible = false
+
+	m.top.setRef("focusedHeaderInfo", {
+		"rowIndex": m.currentRowIndex
+		"rowContent": m.gridContent[m.currentRowIndex]
+	})
+	m.top.focusedHeaderInfoChanged = true
+end sub
 
 
 function onKeyEvent(key as String, press as Boolean) as Boolean
@@ -1501,8 +1572,19 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
 	else if key = "right" then
 		return navigateToRelativeRowItem(m.currentRowIndex, 1)
 	else if key = "OK" then
-		m.top.setRef("selectedRowItemInfo", m.top.getRef("focusedRowItemInfo"))
-		m.top.selectedRowItemInfoChanged = true
+		if isHeaderFocused() then
+			rowIndex = m.currentRowIndex
+			rowContent = m.gridContent[rowIndex]
+			m.top.setRef("selectedHeaderInfo", {
+				"rowIndex": rowIndex
+				"rowContent": rowContent
+			})
+			m.top.selectedHeaderInfoChanged = true
+		else
+			m.top.setRef("selectedRowItemInfo", m.top.getRef("focusedRowItemInfo"))
+			m.top.selectedRowItemInfoChanged = true
+		end if
+
 		return true
 	else
 		return false

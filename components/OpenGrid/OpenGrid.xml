@@ -21,6 +21,10 @@
 		<field id="focusFootprintBlendColor" type="color" />
 
 		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
+		<field id="focusedHeaderInfo" type="assocarray" />
+		<field id="focusedHeaderInfoChanged" type="boolean" alwaysNotify="true" />
+
+		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
 		<field id="selectedHeaderInfo" type="assocarray" />
 		<field id="selectedHeaderInfoChanged" type="boolean" alwaysNotify="true" />
 
@@ -32,12 +36,14 @@
 		<field id="selectedRowItemInfo" type="assocarray" />
 		<field id="selectedRowItemInfoChanged" type="boolean" alwaysNotify="true" />
 
+		<field id="currFocusRow" type="float" />
+
 		<!-- Should we expose this?-->
 		<field id="renderedRowsRef" type="assocarray" />
 	</interface>
 	<children>
 		<Group id="gridVerticalScroll" />
-		<Group id="focusFeedback">
+		<Group id="focusFeedback" visible="false">
 			<Poster id="focusFeedbackPoster" />
 		</Group>
 	</children>
