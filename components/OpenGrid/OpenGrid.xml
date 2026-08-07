@@ -8,9 +8,9 @@
 
 		<field id="contentQueueId" type="string" />
 
-		<!-- TODO still need to add -->
+		<field id="disableAnimation" type="boolean" value="false" />
+		<field id="animateToRowItem" type="array" value="[0, 0]" />
 		<field id="jumpToRowItem" type="array" value="[0, 0]" />
-
 		<field id="width" type="integer" />
 		<field id="height" type="integer" />
 		<field id="focusXOffset" type="integer" />

@@ -188,5 +188,5 @@ sub addGridContent()
 	end for
 
 	m.renderThreadQueue = createObject("roRenderThreadQueue")
-	m.renderThreadQueue.postMessage(m.grid.contentSuppliedQueueId, rows)
+	m.renderThreadQueue.postMessage(m.grid.contentQueueId, rows)
 end sub

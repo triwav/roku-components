@@ -52,7 +52,7 @@ sub init()
 
 	' bs:disable-next-line 1129
 	m.renderThreadQueue = createObject("roRenderThreadQueue")
-	contentQueueId = "OGContentSuppliedQueue:" + createObject("roDeviceInfo").getRandomUUID()
+	contentQueueId = "OGContentQueueId:" + createObject("roDeviceInfo").getRandomUUID()
 
 	m.renderThreadQueue.addMessageHandler(contentQueueId, "onContentSuppliedMessageReceived")
 	m.top.contentQueueId = contentQueueId
@@ -63,11 +63,14 @@ sub init()
 
 	m.contentAssignedKey = "OPEN_GRID_CONTENT_ASSIGNED_TRACKING"
 
-	' Used to allow us to stop creating nodes while we are animating and to also avoid time outs
+	' Used to allow us to have smoother animations and to also avoid time outs
 	m.offscreenNodesTimer = createObject("roSGNode", "Timer")
 	m.offscreenNodesTimer.duration = 0.01
 	m.offscreenNodesTimer.observeFieldScoped("fire", "onOffscreenNodesTimerFired")
 
+	m.top.observeFieldScoped("disableAnimation", "onDisableAnimationChanged")
+	m.top.observeFieldScoped("animateToRowItem", "onAnimateToRowItemChanged")
+	m.top.observeFieldScoped("jumpToRowItem", "onJumpToRowItemChanged")
 	m.top.observeFieldScoped("width", "onWidthChanged")
 	m.top.observeFieldScoped("height", "onHeightChanged")
 	m.top.observeFieldScoped("focusXOffset", "onFocusXOffsetChanged")
@@ -116,6 +119,23 @@ sub updateFocusFeedbackState()
 		m.focusFeedbackPoster.blendColor = m.top.focusFootprintBlendColor
 		m.focusFeedbackPoster.uri = m.top.focusFootprintBitmapUri
 	end if
+end sub
+
+
+sub onDisableAnimationChanged(msg)
+	m.disableAnimation = msg.getData()
+end sub
+
+
+sub onAnimateToRowItemChanged(msg)
+	data = msg.getData()
+	navigateToRowItem(data[0], data[1], true)
+end sub
+
+
+sub onJumpToRowItemChanged(msg)
+	data = msg.getData()
+	navigateToRowItem(data[0], data[1], false)
 end sub
 
 
@@ -173,8 +193,8 @@ sub onFocusedChildChanged()
 
 		if m.currentRowHeaderIsFocused then
 			focusHeader(m.gridRowHeaderNodes[m.currentRowIndex])
-		else if m.lastFocusedItemIndexByRow.count() > 0 then
-			navigateToRowItem(m.currentRowIndex, m.lastFocusedItemIndexByRow[m.currentRowIndex])
+		else
+			focusCurrentRowItem()
 		end if
 	else if m.top.isInFocusChain() = false then
 		m.gridHasFocus = false
@@ -232,10 +252,42 @@ sub createOnscreenNodes(focusedRowIndex as Integer, focusedRowItemIndex as Integ
 		currentRowIndex = currentRowIndex + 1
 	end while
 
-	' Go backwards from the focused row index for peek
-	if focusedRowIndex > 0 then
-		renderRow(focusedRowIndex - 1, focusedRowIndex, focusedRowItemIndex, false)
+	' Go backwards from the focused row index to fill the space above the focused row (focusYOffset)
+    currentRowIndex = focusedRowIndex - 1
+    heightRendered = 0
+    while m.focusYOffset >= heightRendered AND currentRowIndex >= 0
+        renderRow(currentRowIndex, focusedRowIndex, focusedRowItemIndex, false)
+
+        rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+        if rowHeaderNode = invalid then
+            headerHeight = 0
+        else
+            headerHeight = rowHeaderNode.height
 	end if
+
+        rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+        heightRendered += rowItemContainerNode.yOffset + headerHeight
+        currentRowIndex = currentRowIndex - 1
+    end while
+
+	' m.currentRowIndex is still the PREVIOUS focused row at this point (navigateToRowItem
+	' updates it after this returns). The grid animates from the previous row to the new
+	' focused row, scrolling every row in between through the viewport. Those swept rows
+	' were not covered by the fill loops above (which only extend around the target), so
+	' render them up front to avoid flashing empty space mid-animation.
+	sweepStart = m.currentRowIndex
+	sweepEnd = focusedRowIndex
+	if sweepStart > sweepEnd then
+		temp = sweepStart
+		sweepStart = sweepEnd
+		sweepEnd = temp
+	end if
+
+	for sweptRowIndex = sweepStart to sweepEnd
+		if m.renderedRows[sweptRowIndex.toStr()] = invalid then
+			renderRow(sweptRowIndex, focusedRowIndex, focusedRowItemIndex, false)
+		end if
+	end for
 end sub
 
 
@@ -250,11 +302,18 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		return false
 	end if
 
+	if rowIndex > m.gridRowItemsContainerNodes.count() then
+		' We are missing row items container nodes for this row, we need to create it
+		for i = m.gridRowItemsContainerNodes.count() to rowIndex - 1
+			renderRow(i, focusedRowIndex, focusedRowItemIndex, false)
+		end for
+	end if
+
 	previousRowNode = m.gridRowNodes[rowIndex - 1]
 	if rowIndex = 0 then
 		rowNode.translation = [0, 0]
 	else if previousRowNode = invalid then
-		' Should not be possible
+		conditionallyThrow("Previous row node invalid")
 		return false
 	else
 		headerHeight = 0
@@ -361,7 +420,7 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		rowItemNode = conditionallyCreateNodeAndAssignContent(rowIndex, currentRowItemIndex)
 
 		if rowItemNode = invalid then
-			print "Failed to create node for row " rowIndex " item " currentRowItemIndex
+			conditionallyThrow("Failed to create node")
 		else
 			rowUpdated = true
 			if yOffset = 0 AND rowItemNode.hasField("yOffset") then
@@ -393,13 +452,8 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		currentRowItemIndex = currentRowItemIndex + 1
 	end while
 
-	if rowIndex = focusedRowIndex then
-		currentRowItemIndex = focusedRowItemIndex - 1
-	else
-		currentRowItemIndex = m.lastFocusedItemIndexByRow[rowIndex] - 1
-	end if
 
-	' Going backward from the focused item
+	' Start steps for going backward from the focused item to create peek items
 	widthRendered = 0
 
 	if rowIndex = focusedRowIndex then
@@ -431,11 +485,11 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		if rowItemNode = invalid then
 			conditionallyThrow("Failed to create node for row " + rowIndex.toStr() + " item " + currentRowItemIndex.toStr())
 		else
+			' Have to get the translation of the row to the right so we can calculate our translation
 			reversePreviousRowItemIndex = currentRowItemIndex + 1
 			reversePreviousRowItemNode = rowRenderedNodes[reversePreviousRowItemIndex.toStr()]
 			if reversePreviousRowItemNode = invalid then
-				' Should never happen
-				print "Previous row item node invalid for row " rowIndex " item " reversePreviousRowItemIndex
+				conditionallyThrow("Previous row item node invalid")
 				return false
 			else
 				xTranslation = reversePreviousRowItemNode.translation[0] - rowItemNode.xOffset
@@ -460,14 +514,14 @@ sub recycleOffscreenNodes()
 	renderedRows = m.renderedRows
 
 	' Next handle other rows
-	for each rowIndex in renderedRows
+	for each rowIndex in renderedRows.keys() ' Making keys array to avoid modifying the collection while iterating over it
 		' First check if this is outside the vertical render area, if it is then we can recycle the entire row without needing to check each individual item
 		translationDifference = calculateRowVerticalTranslationDifference(rowIndex.toInt())
 		if translationDifference > m.height - m.focusYOffset + m.extraHeightToRender OR translationDifference + m.focusYOffset < -m.extraHeightToRender then
 			' print "Recycling entire row " rowIndex " with vertical translation difference of " translationDifference
 
 			' Recycle entire row
-			for each rowItemIndex in renderedRows[rowIndex]
+			for each rowItemIndex in renderedRows[rowIndex].keys() ' Making keys array to avoid modifying the collection while iterating over it
 				recycleNode(rowIndex, rowItemIndex)
 			end for
 
@@ -539,10 +593,11 @@ sub recycleNode(rowIndex as String, rowItemIndex as String)
 	renderedRows = m.renderedRows
 	rowItemNode = renderedRows[rowIndex.toStr()][rowItemIndex.toStr()]
 
-	nodeTypeAvailableRecycledNodes = m.availableRecycledNodes[rowItemNode.subtype()]
+	rowItemNodeSubtype = rowItemNode.subtype()
+	nodeTypeAvailableRecycledNodes = m.availableRecycledNodes[rowItemNodeSubtype]
 	if nodeTypeAvailableRecycledNodes = invalid then
 		nodeTypeAvailableRecycledNodes = []
-		m.availableRecycledNodes[rowItemNode.subtype()] = nodeTypeAvailableRecycledNodes
+		m.availableRecycledNodes[rowItemNodeSubtype] = nodeTypeAvailableRecycledNodes
 	end if
 	nodeTypeAvailableRecycledNodes.push(rowItemNode)
 
@@ -571,14 +626,13 @@ sub onOffscreenNodesTimerFired()
 
 	timeBudget = 16 ' ms
 	ts = createObject("roTimespan")
-	rowUpdated = false
 
 	currentRowIndex = m.currentRowIndex
 	heightRendered = 0
 
 	' Go forward from the focused row index
 	while m.height - m.focusYOffset + m.extraHeightToRender >= heightRendered AND currentRowIndex < m.gridContent.count() AND ts.totalMilliseconds() < timeBudget
-		rowUpdated = renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true) OR rowUpdated
+		renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true)
 
 		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
 		if rowHeaderNode = invalid then
@@ -598,7 +652,7 @@ sub onOffscreenNodesTimerFired()
 
 	while m.focusYOffset + m.extraHeightToRender >= heightRendered AND currentRowIndex >= 0 AND ts.totalMilliseconds() < timeBudget
 		' print "Offscreen timer going backwards, currentRowIndex: " currentRowIndex " heightRendered: " heightRendered " focusYOffset: " m.focusYOffset
-		rowUpdated = renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true) OR rowUpdated
+		renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true)
 
 		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
 		if rowHeaderNode = invalid then
@@ -675,6 +729,7 @@ function conditionallyCreateNodeAndAssignContent(rowIndex as Integer, rowItemInd
 
 	rowItemContent = rowGridContent.items[rowItemIndex]
 	' Only set content if we have not already to improve performance. We add our own field to track this
+	'TODO move to initial content ingestion instead
 	contentAssigned = rowItemContent[m.contentAssignedKey]
 	if contentAssigned = invalid then
 		contentAssigned = {}
@@ -889,8 +944,15 @@ end sub
 
 
 sub onAnimationTimerFired()
+	if m.disableAnimation = true then
+		' We skip an animation by animating so much that it will always happen in one frame
+		changeAmount = 100000
+		m.disableAnimation = false
+	else
 	timeElapsed = m.animationTickTimeSpan.totalMicroseconds()
 	changeAmount = m.animationRate * timeElapsed
+	end if
+
 
 	isFocusFeedbackAnimationCompleted = animateFocusFeedback(changeAmount)
 
@@ -1193,6 +1255,7 @@ sub onAnimationTimerFired()
 	else
 		' Do one final cleanup
 		recycleOffscreenNodes()
+		m.offscreenNodesTimer.control = "start"
 	end if
 end sub
 
@@ -1309,8 +1372,10 @@ sub updateRowItemTranslations(rowIndex as Integer)
 	for i = currentlyFocusedItemIndex - 1 to m.rowsRenderedNodesRanges[rowIndex].start step -1
 		currentRowItemNode = renderedRowItems[i.toStr()]
 		if currentRowItemNode = invalid then
-			conditionallyThrow("Row item node invalid for row " + rowIndex.toStr() + " item " + i.toStr())
-			continue for
+			' Gap in rendered nodes (e.g. after a jump). Narrow the range to the last
+            ' contiguous valid index and let recycleOffscreenNodes clean up the orphans.
+            m.rowsRenderedNodesRanges[rowIndex].start = i + 1
+			exit for
 		end if
 
 		xTranslation = lastRowItemNode.translation[0] - currentRowItemNode.xOffset
@@ -1325,8 +1390,10 @@ sub updateRowItemTranslations(rowIndex as Integer)
 	for i = currentlyFocusedItemIndex + 1 to m.rowsRenderedNodesRanges[rowIndex].end
 		currentRowItemNode = renderedRowItems[i.toStr()]
 		if currentRowItemNode = invalid then
-			conditionallyThrow("Row item node invalid for row " + rowIndex.toStr() + " item " + i.toStr())
-			continue for
+			' Gap in rendered nodes (e.g. after a jump). Narrow the range to the last
+            ' contiguous valid index and let recycleOffscreenNodes clean up the orphans.
+            m.rowsRenderedNodesRanges[rowIndex].end = i - 1
+            exit for
 		end if
 
 		xTranslation = lastRowItemNode.translation[0] + lastRowItemNode.xOffset
@@ -1373,14 +1440,14 @@ sub onContentSuppliedMessageReceived(rows, msgInfo)
 		rowIndex++
 	end for
 
-	navigateToRowItem(0, 0)
+	navigateToRowItem(0, 0, false)
 	m.focusFeedback.visible = true
 end sub
 
 
 ' Navigate to a specific row and item index
 ' Returns true if navigation was successful, false if not (out of bounds or no composition loaded)
-function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer) as Boolean
+function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer, animate as Boolean) as Boolean
 	rowContent = m.gridContent[rowIndex]
 	if rowContent = invalid then
 		print "No content for row at index" rowIndex
@@ -1393,18 +1460,18 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer) as Bool
 		return false
 	end if
 
-	' We make the nodes that are showing onscreen up front
+	' We make the nodes that are showing onscreen or necessary for the transition up front. Nodes outside of teh onscreen view will be created by offscreenNodesTimer
 	createOnscreenNodes(rowIndex, rowItemIndex)
 
 	renderedRow = m.renderedRows[rowIndex.toStr()]
 	if renderedRow = invalid then
-		print "No rendered row at index" rowIndex
+		conditionallyThrow("No rendered row")
 		return false
 	end if
 
 	rowItemNode = renderedRow[rowItemIndex.toStr()]
 	if rowItemNode = invalid then
-		print "No loaded item at index" rowItemIndex " in row" rowIndex
+		conditionallyThrow("No loaded item")
 		return false
 	end if
 
@@ -1415,7 +1482,7 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer) as Bool
 	m.focusFeedbackWidthAnimateTo = rowItemNode.width + bitmapMargins.left + bitmapMargins.right
 	m.focusFeedbackHeightAnimateTo = rowItemNode.height  + bitmapMargins.top + bitmapMargins.bottom
 
-	animateToRow(rowIndex)
+	animateToRow(rowIndex, animate)
 
 	m.currentRowHeaderIsFocused = false
 
@@ -1430,17 +1497,13 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer) as Bool
 	})
 	m.top.focusedRowItemInfoChanged = true
 
-	' Next go ahead and cleanup any nodes that are currently outside the renderer area due to this navigation
-	' recycleOffscreenNodes()
-
-	' Go ahead and start the offscreen node timer to allow new nodes to be created for the content that is now in the rendered area but not on screen yet
-	m.offscreenNodesTimer.control = "start"
-
+	' Stop offscreen timer as we know we are about to animate
+	m.offscreenNodesTimer.control = "stop"
 	return true
 end function
 
 
-function animateToRow(rowIndex)
+function animateToRow(rowIndex as Integer, animate as Boolean)
 	currentRowHeaderHeight = 0
 	header = m.gridRowHeaderNodes[rowIndex]
 	if header <> invalid then
@@ -1450,7 +1513,15 @@ function animateToRow(rowIndex)
 	m.focusFeedbackTranslationYAnimateTo = currentRowHeaderHeight + m.focusYOffset
 
 	m.gridVerticalScrollTranslationYAnimateTo = -m.gridRowNodes[rowIndex].translation[1] + m.focusYOffset
+
+	if animate AND m.disableAnimation <> true then
 	conditionallyStartAnimationTimer()
+	else
+		tempDisableAnimation = m.disableAnimation
+		m.disableAnimation = true
+		onAnimationTimerFired()
+		m.disableAnimation = tempDisableAnimation
+	end if
 end function
 
 
@@ -1461,7 +1532,7 @@ function navigateToLastFocusedRowItem(rowIndex as Integer) as Boolean
 		return false
 	end if
 
-	return navigateToRowItem(rowIndex, currentItemIndex)
+	return navigateToRowItem(rowIndex, currentItemIndex, true)
 end function
 
 
@@ -1474,7 +1545,7 @@ function navigateToRelativeRowItem(rowIndex as Integer, itemIndexOffset as Integ
 
 	newItemIndex = currentItemIndex + itemIndexOffset
 
-	return navigateToRowItem(rowIndex, newItemIndex)
+	return navigateToRowItem(rowIndex, newItemIndex, true)
 end function
 
 
@@ -1519,7 +1590,7 @@ function navigateDown()
 	if nextRowHeaderNode <> invalid AND nextRowHeaderNode.focusable = true then
 		' We need to move focus down to the next row and animate to it
 		m.currentRowIndex = m.currentRowIndex + 1
-		animateToRow(m.currentRowIndex)
+		animateToRow(m.currentRowIndex, true)
 		focusHeader(nextRowHeaderNode)
 		return true
 	end if
@@ -1541,6 +1612,31 @@ sub focusHeader(headerNode as Object)
 		"rowContent": m.gridContent[m.currentRowIndex]
 	})
 	m.top.focusedHeaderInfoChanged = true
+end sub
+
+
+sub focusCurrentRowItem()
+	if m.lastFocusedItemIndexByRow.isEmpty() then
+		return
+	end if
+
+	m.currentRowHeaderIsFocused = false
+	currentRowIndex = m.currentRowIndex
+	currentRowItemIndex = m.lastFocusedItemIndexByRow[currentRowIndex]
+
+	renderedRow = m.renderedRows[currentRowIndex.toStr()]
+	if renderedRow = invalid then
+		conditionallyThrow("No rendered row")
+		return
+	end if
+
+	rowItemNode = renderedRow[currentRowItemIndex.toStr()]
+	if rowItemNode = invalid then
+		conditionallyThrow("No loaded item")
+		return
+	end if
+
+	rowItemNode.setFocus(true)
 end sub
 
 
