@@ -15,7 +15,7 @@
 		<field id="rowFocusPercent" type="float" />
 
 		<!-- Output fields -->
-		<field id="width" type="float" />
+		<field id="width" type="float" alias="rect.width" />
 		<field id="height" type="float" />
 
 		<field id="xOffset" type="float" />
@@ -26,7 +26,7 @@
 	<children>
 		<LayoutGroup id="layout" itemSpacings="[0]">
 			<Poster id="poster" />
-			<Rectangle id="rect" height="24" color="#000000">
+			<Rectangle id="rect" height="30" color="#000000">
 				<Label id="label" translation="[0, 6]" />
 			</Rectangle>
 		</LayoutGroup>

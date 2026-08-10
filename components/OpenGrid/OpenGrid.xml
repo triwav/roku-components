@@ -20,6 +20,10 @@
 		<field id="focusFootprintBitmapUri" type="uri" />
 		<field id="focusFootprintBlendColor" type="color" />
 
+		<!-- Optional manual override for how far the focus feedback extends past the content on each axis.
+		     When set, focusFeedbackExtension[0] (width) / [1] (height) are used instead of the poster's bitmapMargins. -->
+		<field id="focusFeedbackExtension" type="array" />
+
 		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
 		<field id="focusedHeaderInfo" type="assocarray" />
 		<field id="focusedHeaderInfoChanged" type="boolean" alwaysNotify="true" />

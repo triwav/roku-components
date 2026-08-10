@@ -80,6 +80,7 @@ sub init()
 	m.top.observeFieldScoped("focusBitmapBlendColor", "updateFocusFeedbackState")
 	m.top.observeFieldScoped("focusFootprintBitmapUri", "updateFocusFeedbackState")
 	m.top.observeFieldScoped("focusFootprintBlendColor", "updateFocusFeedbackState")
+	m.top.observeFieldScoped("focusFeedbackExtension", "onFocusFeedbackExtensionChanged")
 
 	m.focusFeedbackPoster.observeFieldScoped("bitmapMargins", "onFocusFeedbackPosterBitmapMarginsChanged")
 
@@ -108,6 +109,11 @@ sub init()
 	m.currentRowFocusPercents = {}
 
 	m.gridNeedsVerticalTranslationUpdate = false
+
+	' How far the focus feedback extends past the content on each axis. Defaults to the poster's
+	' bitmapMargins but can be overridden via m.top.focusFeedbackExtension (see onFocusFeedbackPosterBitmapMarginsChanged)
+	m.focusFeedbackWidthExtension = 0
+	m.focusFeedbackHeightExtension = 0
 end sub
 
 
@@ -152,8 +158,33 @@ end sub
 
 
 sub onFocusFeedbackPosterBitmapMarginsChanged(msg)
-	bitmapMargins = msg.getData()
-	m.focusFeedbackPoster.translation = [-bitmapMargins.left, -bitmapMargins.top]
+	updateFocusFeedbackExtension()
+end sub
+
+
+sub onFocusFeedbackExtensionChanged()
+	updateFocusFeedbackExtension()
+end sub
+
+
+' Recomputes how far the focus feedback extends past the content on each axis. Defaults to the
+' poster's bitmapMargins (stretch markers) but honors m.top.focusFeedbackExtension when set, which
+' is useful for 9-patches with a corner radius where bitmapMargins would over-expand.
+sub updateFocusFeedbackExtension()
+	bitmapMargins = m.focusFeedbackPoster.bitmapMargins
+
+	focusFeedbackExtension = m.top.focusFeedbackExtension
+	if focusFeedbackExtension <> invalid then
+		m.focusFeedbackWidthExtension = focusFeedbackExtension[0]
+		m.focusFeedbackHeightExtension = focusFeedbackExtension[1]
+	else
+		m.focusFeedbackWidthExtension = bitmapMargins.left + bitmapMargins.right
+		m.focusFeedbackHeightExtension = bitmapMargins.top + bitmapMargins.bottom
+	end if
+
+	' Offset by half the extension on each axis so the feedback stays centered on the content.
+	' Derived from the extension (not bitmapMargins) so an override like [0, 0] positions correctly.
+	m.focusFeedbackPoster.translation = [-m.focusFeedbackWidthExtension / 2, -m.focusFeedbackHeightExtension / 2]
 end sub
 
 
@@ -834,8 +865,7 @@ sub onRowItemWidthChanged(msg)
 	end if
 
 	' Only update the focus feedback width if the currently focused item changed
-	bitmapMargins = m.focusFeedbackPoster.bitmapMargins
-	m.focusFeedbackWidthAnimateTo = rowItem.width + bitmapMargins.left + bitmapMargins.right
+	m.focusFeedbackWidthAnimateTo = rowItem.width + m.focusFeedbackWidthExtension
 
 	conditionallyStartAnimationTimer()
 end sub
@@ -855,8 +885,7 @@ sub onRowItemHeightChanged(msg)
 	end if
 
 	' Only update the focus feedback height if the currently focused item changed
-	bitmapMargins = m.focusFeedbackPoster.bitmapMargins
-	m.focusFeedbackHeightAnimateTo = rowItem.height + bitmapMargins.top + bitmapMargins.bottom
+	m.focusFeedbackHeightAnimateTo = rowItem.height + m.focusFeedbackHeightExtension
 
 	conditionallyStartAnimationTimer()
 end sub
@@ -1478,9 +1507,8 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer, animate
 	m.currentRowIndex = rowIndex
 	m.lastFocusedItemIndexByRow[rowIndex] = rowItemIndex
 
-	bitmapMargins = m.focusFeedbackPoster.bitmapMargins
-	m.focusFeedbackWidthAnimateTo = rowItemNode.width + bitmapMargins.left + bitmapMargins.right
-	m.focusFeedbackHeightAnimateTo = rowItemNode.height  + bitmapMargins.top + bitmapMargins.bottom
+	m.focusFeedbackWidthAnimateTo = rowItemNode.width + m.focusFeedbackWidthExtension
+	m.focusFeedbackHeightAnimateTo = rowItemNode.height + m.focusFeedbackHeightExtension
 
 	animateToRow(rowIndex, animate)
 

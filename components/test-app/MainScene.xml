@@ -6,9 +6,9 @@
 			id="grid"
 			focusXOffset="400"
 			focusYOffset="90"
+			focusFeedbackExtension="[6,6]"
 			focusBitmapUri="pkg:/images/focus-feedback-{resolution}.9.png"
 			focusFootprintBitmapUri="pkg:/images/focus-feedback-{resolution}.9.png"
 			translation="[0, 0]" />
-
 	</children>
 </component>

@@ -45,7 +45,7 @@ sub onContentUpdated()
 	m.verticalPadding = 48
 
 	m.top.width = imageWidth
-	m.top.height = imageHeight
+	m.top.height = imageHeight + 30
 
 	m.label.width = imageWidth
 
@@ -67,7 +67,7 @@ sub onXOffsetChanged(msg)
 		x: 0,
 		y: 0,
 		width: width,
-		height: m.posterHeight
+		height: m.posterHeight + 30
 	}
 
 	' Go ahead and update width as well so it matches up
