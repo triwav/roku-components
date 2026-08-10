@@ -31,18 +31,18 @@ sub init()
 	m.gridHasFocus = false
 
 	' The actual content for the grid, an array of row configs where each row config has an array of item configs
-	m.gridContent = []
+	m.content = []
 	' IMPROVEMENT perhaps remove grid prefix from these variable names to make it less verbose
 
 	' The nodes for each row that are currently in the grid, indexed by row index
-	m.gridRowNodes = []
+	m.rowNodes = []
 
-	m.gridRowHeaderNodes = []
+	m.rowHeaderNodes = []
 
 	m.rowsRenderedNodesRanges = []
 
 	' We need to access the item containers quite often so we store them here after they are made
-	m.gridRowItemsContainerNodes = []
+	m.rowItemsContainerNodes = []
 
 	' key is row index as string
 	m.renderedRows = {}
@@ -57,7 +57,7 @@ sub init()
 	m.renderThreadQueue.addMessageHandler(contentQueueId, "onContentSuppliedMessageReceived")
 	m.top.contentQueueId = contentQueueId
 
-	m.gridVerticalScroll = m.top.findNode("gridVerticalScroll")
+	m.verticalScroll = m.top.findNode("verticalScroll")
 	m.focusFeedback = m.top.findNode("focusFeedback")
 	m.focusFeedbackPoster = m.top.findNode("focusFeedbackPoster")
 
@@ -98,7 +98,7 @@ sub init()
 	m.focusFeedbackTranslationYAnimateTo = 0
 	m.focusFeedbackWidthAnimateTo = 0
 	m.focusFeedbackHeightAnimateTo = 0
-	m.gridVerticalScrollTranslationYAnimateTo = 0
+	m.verticalScrollTranslationYAnimateTo = 0
 	m.runningRowItemsAnimations = {}
 	m.rowsNeedingHorizontalTranslationUpdate = {}
 
@@ -108,7 +108,7 @@ sub init()
 	' Includes the last focusPercent values for each renderered row item in the current row. Used to avoid having to set fields when the value hasn't changed
 	m.currentRowFocusPercents = {}
 
-	m.gridNeedsVerticalTranslationUpdate = false
+	m.needsVerticalTranslationUpdate = false
 
 	' How far the focus feedback extends past the content on each axis. Defaults to the poster's
 	' bitmapMargins but can be overridden via m.top.focusFeedbackExtension (see onFocusFeedbackPosterBitmapMarginsChanged)
@@ -199,7 +199,7 @@ sub onFocusXOffsetChanged()
 
 	xOffsetDifference = m.focusXOffset - previousXOffset
 
-	m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0] + xOffsetDifference, m.gridVerticalScroll.translation[1]]
+	m.verticalScroll.translation = [m.verticalScroll.translation[0] + xOffsetDifference, m.verticalScroll.translation[1]]
 	m.focusFeedback.translation = [m.focusFeedback.translation[0] + xOffsetDifference, m.focusFeedback.translation[1]]
 end sub
 
@@ -211,7 +211,7 @@ sub onFocusYOffsetChanged()
 
 	yOffsetDifference = m.focusYOffset - previousYOffset
 
-	m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], m.gridVerticalScroll.translation[1] + yOffsetDifference]
+	m.verticalScroll.translation = [m.verticalScroll.translation[0], m.verticalScroll.translation[1] + yOffsetDifference]
 	m.focusFeedback.translation = [m.focusFeedback.translation[0], m.focusFeedback.translation[1] + yOffsetDifference]
 end sub
 
@@ -223,7 +223,7 @@ sub onFocusedChildChanged()
 		updatedFocus = true
 
 		if m.currentRowHeaderIsFocused then
-			focusHeader(m.gridRowHeaderNodes[m.currentRowIndex])
+			focusHeader(m.rowHeaderNodes[m.currentRowIndex])
 		else
 			focusCurrentRowItem()
 		end if
@@ -268,17 +268,17 @@ sub createOnscreenNodes(focusedRowIndex as Integer, focusedRowItemIndex as Integ
 	currentRowIndex = focusedRowIndex
 	heightRendered = 0
 	' Go forward from the focused row index
-	while m.height - m.focusYOffset >= heightRendered AND currentRowIndex < m.gridContent.count()
+	while m.height - m.focusYOffset >= heightRendered AND currentRowIndex < m.content.count()
 		renderRow(currentRowIndex, focusedRowIndex, focusedRowItemIndex, false)
 
-		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+		rowHeaderNode = m.rowHeaderNodes[currentRowIndex]
 		if rowHeaderNode = invalid then
 			headerHeight = 0
 		else
 			headerHeight = rowHeaderNode.height
 		end if
 
-		rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+		rowItemContainerNode = m.rowItemsContainerNodes[currentRowIndex]
 		heightRendered += rowItemContainerNode.yOffset + headerHeight
 		currentRowIndex = currentRowIndex + 1
 	end while
@@ -289,14 +289,14 @@ sub createOnscreenNodes(focusedRowIndex as Integer, focusedRowItemIndex as Integ
     while m.focusYOffset >= heightRendered AND currentRowIndex >= 0
         renderRow(currentRowIndex, focusedRowIndex, focusedRowItemIndex, false)
 
-        rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+        rowHeaderNode = m.rowHeaderNodes[currentRowIndex]
         if rowHeaderNode = invalid then
             headerHeight = 0
         else
             headerHeight = rowHeaderNode.height
 	end if
 
-        rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+        rowItemContainerNode = m.rowItemsContainerNodes[currentRowIndex]
         heightRendered += rowItemContainerNode.yOffset + headerHeight
         currentRowIndex = currentRowIndex - 1
     end while
@@ -325,7 +325,7 @@ end sub
 function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowItemIndex as Integer, includeOffscreen as Boolean)
 	' PREREQUISITES/SETUP START
 	rowUpdated = false
-	rowNode = m.gridRowNodes[rowIndex]
+	rowNode = m.rowNodes[rowIndex]
 
 	if rowNode = invalid then
 		' Should never happen
@@ -333,14 +333,14 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		return false
 	end if
 
-	if rowIndex > m.gridRowItemsContainerNodes.count() then
+	if rowIndex > m.rowItemsContainerNodes.count() then
 		' We are missing row items container nodes for this row, we need to create it
-		for i = m.gridRowItemsContainerNodes.count() to rowIndex - 1
+		for i = m.rowItemsContainerNodes.count() to rowIndex - 1
 			renderRow(i, focusedRowIndex, focusedRowItemIndex, false)
 		end for
 	end if
 
-	previousRowNode = m.gridRowNodes[rowIndex - 1]
+	previousRowNode = m.rowNodes[rowIndex - 1]
 	if rowIndex = 0 then
 		rowNode.translation = [0, 0]
 	else if previousRowNode = invalid then
@@ -348,17 +348,17 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		return false
 	else
 		headerHeight = 0
-		header = m.gridRowHeaderNodes[rowIndex - 1]
+		header = m.rowHeaderNodes[rowIndex - 1]
 		if header <> invalid then
 			headerHeight = header.height
 		end if
 
-		yOffset = m.gridRowItemsContainerNodes[rowIndex - 1].yOffset
+		yOffset = m.rowItemsContainerNodes[rowIndex - 1].yOffset
 
 		rowNode.translation = [0, previousRowNode.translation[1] + headerHeight + yOffset]
 	end if
 
-	rowConfig = m.gridContent[rowIndex]
+	rowConfig = m.content[rowIndex]
 	if rowConfig = invalid then
 		print "No row config for row " rowIndex
 		return false
@@ -373,7 +373,7 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 
 	' HEADER START
 	headerHeight = 0
-	rowHeaderNode = m.gridRowHeaderNodes[rowIndex]
+	rowHeaderNode = m.rowHeaderNodes[rowIndex]
 	headerConfig = rowConfig.header
 	if rowHeaderNode = invalid AND headerConfig <> invalid then
 		componentName = headerConfig.componentName
@@ -397,14 +397,14 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 			else
 				headerHeight = rowHeaderNode.height
 				rowNode.insertChild(rowHeaderNode, 0)
-				m.gridRowHeaderNodes[rowIndex] = rowHeaderNode
+				m.rowHeaderNodes[rowIndex] = rowHeaderNode
 			end if
 		end if
 	end if
 	' HEADER END
 
 	' ROW ITEMS CONTAINER START
-	rowItemContainerNode = m.gridRowItemsContainerNodes[rowIndex]
+	rowItemContainerNode = m.rowItemsContainerNodes[rowIndex]
 	if rowItemContainerNode = invalid then
 		rowItemContainerNode = createObject("roSGNode", "Group")
 		rowItemContainerNode.id = "rowItemsContainer"
@@ -413,7 +413,7 @@ function renderRow(rowIndex as Integer, focusedRowIndex as Integer, focusedRowIt
 		}, true)
 		rowItemContainerNode.translation = [0, headerHeight]
 		rowNode.appendChild(rowItemContainerNode)
-		m.gridRowItemsContainerNodes[rowIndex] = rowItemContainerNode
+		m.rowItemsContainerNodes[rowIndex] = rowItemContainerNode
 	end if
 	' ROW ITEMS CONTAINER END
 
@@ -635,7 +635,7 @@ sub recycleNode(rowIndex as String, rowItemIndex as String)
 	renderedRows[rowIndex].delete(rowItemIndex)
 
 	trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
-	rowContent = m.gridContent[rowIndex.toInt()].items
+	rowContent = m.content[rowIndex.toInt()].items
 	rowItemContent = rowContent[rowItemIndex.toInt()]
 	rowItemContent[m.contentAssignedKey].delete(trackingKey)
 
@@ -662,17 +662,17 @@ sub onOffscreenNodesTimerFired()
 	heightRendered = 0
 
 	' Go forward from the focused row index
-	while m.height - m.focusYOffset + m.extraHeightToRender >= heightRendered AND currentRowIndex < m.gridContent.count() AND ts.totalMilliseconds() < timeBudget
+	while m.height - m.focusYOffset + m.extraHeightToRender >= heightRendered AND currentRowIndex < m.content.count() AND ts.totalMilliseconds() < timeBudget
 		renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true)
 
-		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+		rowHeaderNode = m.rowHeaderNodes[currentRowIndex]
 		if rowHeaderNode = invalid then
 			headerHeight = 0
 		else
 			headerHeight = rowHeaderNode.height
 		end if
 
-		rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+		rowItemContainerNode = m.rowItemsContainerNodes[currentRowIndex]
 		heightRendered += rowItemContainerNode.yOffset + headerHeight
 		currentRowIndex += 1
 	end while
@@ -685,14 +685,14 @@ sub onOffscreenNodesTimerFired()
 		' print "Offscreen timer going backwards, currentRowIndex: " currentRowIndex " heightRendered: " heightRendered " focusYOffset: " m.focusYOffset
 		renderRow(currentRowIndex, m.currentRowIndex, m.lastFocusedItemIndexByRow[currentRowIndex], true)
 
-		rowHeaderNode = m.gridRowHeaderNodes[currentRowIndex]
+		rowHeaderNode = m.rowHeaderNodes[currentRowIndex]
 		if rowHeaderNode = invalid then
 			headerHeight = 0
 		else
 			headerHeight = rowHeaderNode.height
 		end if
 
-		rowItemContainerNode = m.gridRowItemsContainerNodes[currentRowIndex]
+		rowItemContainerNode = m.rowItemsContainerNodes[currentRowIndex]
 		heightRendered += rowItemContainerNode.yOffset + headerHeight
 		currentRowIndex -= 1
 	end while
@@ -713,13 +713,13 @@ function conditionallyCreateNodeAndAssignContent(rowIndex as Integer, rowItemInd
 	rowRenderedNodes = m.renderedRows[rowIndex.toStr()]
 	rowItemNode = rowRenderedNodes[rowItemIndex.toStr()]
 
-	rowGridContent = m.gridContent[rowIndex]
-	rowItemContent = rowGridContent.items[rowItemIndex]
+	rowContent = m.content[rowIndex]
+	rowItemContent = rowContent.items[rowItemIndex]
 
 	if rowItemContent.componentName <> invalid then
 		itemComponentName = rowItemContent.componentName
-	else if rowGridContent.componentName <> invalid then
-		itemComponentName = rowGridContent.componentName
+	else if rowContent.componentName <> invalid then
+		itemComponentName = rowContent.componentName
 	else
 		print "No componentName included for " "row " rowIndex " item " rowItemIndex
 		return invalid
@@ -758,7 +758,7 @@ function conditionallyCreateNodeAndAssignContent(rowIndex as Integer, rowItemInd
 		return invalid
 	end if
 
-	rowItemContent = rowGridContent.items[rowItemIndex]
+	rowItemContent = rowContent.items[rowItemIndex]
 	' Only set content if we have not already to improve performance. We add our own field to track this
 	'TODO move to initial content ingestion instead
 	contentAssigned = rowItemContent[m.contentAssignedKey]
@@ -845,7 +845,7 @@ sub onRowItemYOffsetChanged(msg)
 	rowItemsContainer = rowItem.getParent()
 	rowItemsContainer.yOffset = yOffset
 
-	m.gridNeedsVerticalTranslationUpdate = true
+	m.needsVerticalTranslationUpdate = true
 
 	conditionallyStartAnimationTimer()
 end sub
@@ -956,9 +956,9 @@ end function
 
 
 function calculateRowVerticalTranslationDifference(rowIndex as Integer) as Float
-	rowNode = m.gridRowNodes[rowIndex]
+	rowNode = m.rowNodes[rowIndex]
 	rowYTranslation = rowNode.translation[1]
-	translationDifference = m.gridVerticalScroll.translation[1] + rowYTranslation - m.focusYOffset
+	translationDifference = m.verticalScroll.translation[1] + rowYTranslation - m.focusYOffset
 
 	return translationDifference
 end function
@@ -986,27 +986,27 @@ sub onAnimationTimerFired()
 	isFocusFeedbackAnimationCompleted = animateFocusFeedback(changeAmount)
 
 	shouldUpdateRowFocusPercent = true
-	isGridVerticalScrollTranslationYAnimationCompleted = true
-	animateTo = m.gridVerticalScrollTranslationYAnimateTo
-	currentGridVerticalScrollYTranslation = m.gridVerticalScroll.translation[1]
-	if animateTo < currentGridVerticalScrollYTranslation then
-		newTranslationY = currentGridVerticalScrollYTranslation - changeAmount
+	isVerticalScrollTranslationYAnimationCompleted = true
+	animateTo = m.verticalScrollTranslationYAnimateTo
+	currentVerticalScrollYTranslation = m.verticalScroll.translation[1]
+	if animateTo < currentVerticalScrollYTranslation then
+		newTranslationY = currentVerticalScrollYTranslation - changeAmount
 		if newTranslationY < animateTo then
 			newTranslationY = animateTo
 		else
-			isGridVerticalScrollTranslationYAnimationCompleted = false
+			isVerticalScrollTranslationYAnimationCompleted = false
 		end if
 
-		m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], newTranslationY]
-	else if animateTo > currentGridVerticalScrollYTranslation then
-		newTranslationY = currentGridVerticalScrollYTranslation + changeAmount
+		m.verticalScroll.translation = [m.verticalScroll.translation[0], newTranslationY]
+	else if animateTo > currentVerticalScrollYTranslation then
+		newTranslationY = currentVerticalScrollYTranslation + changeAmount
 		if newTranslationY > animateTo then
 			newTranslationY = animateTo
 		else
-			isGridVerticalScrollTranslationYAnimationCompleted = false
+			isVerticalScrollTranslationYAnimationCompleted = false
 		end if
 
-		m.gridVerticalScroll.translation = [m.gridVerticalScroll.translation[0], newTranslationY]
+		m.verticalScroll.translation = [m.verticalScroll.translation[0], newTranslationY]
 	else
 		shouldUpdateRowFocusPercent = false
 	end if
@@ -1129,26 +1129,26 @@ sub onAnimationTimerFired()
 		m.rowsNeedingHorizontalTranslationUpdate = {}
 	end if
 
-	if m.gridNeedsVerticalTranslationUpdate then
-		for i = m.currentRowIndex to m.gridRowItemsContainerNodes.count() - 2
-			currentGridRowNodeYTranslation = m.gridRowNodes[i].translation[1]
+	if m.needsVerticalTranslationUpdate then
+		for i = m.currentRowIndex to m.rowItemsContainerNodes.count() - 2
+			currentRowNodeYTranslation = m.rowNodes[i].translation[1]
 
-			nextGridRowNode = m.gridRowNodes[i + 1]
-			totalYOffset = m.gridRowItemsContainerNodes[i].yOffset
+			nextRowNode = m.rowNodes[i + 1]
+			totalYOffset = m.rowItemsContainerNodes[i].yOffset
 
-			headerNode = m.gridRowHeaderNodes[i]
+			headerNode = m.rowHeaderNodes[i]
 			if headerNode <> invalid then
 				totalYOffset = totalYOffset + headerNode.height
 			end if
 
-			nextGridRowNode.translation = [nextGridRowNode.translation[0], currentGridRowNodeYTranslation + totalYOffset]
+			nextRowNode.translation = [nextRowNode.translation[0], currentRowNodeYTranslation + totalYOffset]
 		end for
 	end if
 
 	' Calculate our rowFocusPercent and rowHasFocus
 	if shouldUpdateRowFocusPercent then
 		' t = createObject("roTimespan")
-		gridVerticalScrollVerticalTranslation = m.gridVerticalScroll.translation[1] - m.focusYOffset
+		verticalScrollVerticalTranslation = m.verticalScroll.translation[1] - m.focusYOffset
 
 		hasCalculatedFocusRow = false
 
@@ -1164,13 +1164,13 @@ sub onAnimationTimerFired()
 		for each rowIndexInt in renderedRowsIndexes
 			' Possibly revisit in the future. Using current rowIndex for focus percent calculations makes things simpler but focus percent will be different than the actual with different size items
 			rowIndex = rowIndexInt.toStr()
-			rowNode = m.gridRowNodes[rowIndexInt]
+			rowNode = m.rowNodes[rowIndexInt]
 			rowVerticalTranslation = rowNode.translation[1]
 
 			previousRowFocusOffsetPercentage = m.rowFocusPercents[rowIndex]
 
-			' gridVerticalScrollVerticalTranslation is negative so we add to get the difference
-			difference = gridVerticalScrollVerticalTranslation + rowVerticalTranslation
+			' verticalScrollVerticalTranslation is negative so we add to get the difference
+			difference = verticalScrollVerticalTranslation + rowVerticalTranslation
 
 			focusFieldUpdates = []
 
@@ -1187,13 +1187,13 @@ sub onAnimationTimerFired()
 					end if
 				end if
 			else
-				gridRowItemsContainerNode = m.gridRowItemsContainerNodes[rowIndexInt]
+				rowItemsContainerNode = m.rowItemsContainerNodes[rowIndexInt]
 
-				rowHeight = gridRowItemsContainerNode.yOffset
+				rowHeight = rowItemsContainerNode.yOffset
 
-				gridRowHeaderNode = m.gridRowHeaderNodes[rowIndexInt]
-				if gridRowHeaderNode <> invalid then
-					rowHeight = rowHeight + gridRowHeaderNode.height
+				rowHeaderNode = m.rowHeaderNodes[rowIndexInt]
+				if rowHeaderNode <> invalid then
+					rowHeight = rowHeight + rowHeaderNode.height
 				end if
 
 				' Will be negative if above the focus area and positive if below the focus area
@@ -1274,7 +1274,7 @@ sub onAnimationTimerFired()
 		' print "calculate focusPercent and itemHasFocus took:" ; t.totalMicroseconds() / 1000000
 	end if
 
-	allAnimationsCompleted = isFocusFeedbackAnimationCompleted AND isGridVerticalScrollTranslationYAnimationCompleted AND isCurrentFocusedRowItemTranslationXAnimationCompleted AND isAllRowItemAnimationsCompleted
+	allAnimationsCompleted = isFocusFeedbackAnimationCompleted AND isVerticalScrollTranslationYAnimationCompleted AND isCurrentFocusedRowItemTranslationXAnimationCompleted AND isAllRowItemAnimationsCompleted
 
 	' We are using control for knowing if the timer is already running so need to set it to stop so conditionallyStartAnimationTimer restarts properly
 	m.animationTimer.control = "stop"
@@ -1434,15 +1434,15 @@ end sub
 
 
 sub onContentSuppliedMessageReceived(rows, msgInfo)
-	m.gridVerticalScroll.removeChildren(m.gridVerticalScroll.getChildren(-1, 0))
-	m.gridContent = []
+	m.verticalScroll.removeChildren(m.verticalScroll.getChildren(-1, 0))
+	m.content = []
 
 	' TODO rewrite to support subsequent content updates instead of just initial load
 	previousRowIndex = -1
 	rowIndex = 0
 	for each rowConfig in rows
 		' TODO need to build this out more
-		m.gridContent[rowIndex] = rowConfig
+		m.content[rowIndex] = rowConfig
 		' We use the row index as the way to know if we are making a new row or updating an existing one
 		' rowIndex = rowConfig.rowIndex
 		' if rowIndex <> invalid then
@@ -1459,13 +1459,13 @@ sub onContentSuppliedMessageReceived(rows, msgInfo)
 		' isUpdate = false
 		' end if
 
-		m.gridRowNodes[rowIndex] = rowNode
+		m.rowNodes[rowIndex] = rowNode
 
 		if m.rowsRenderedNodesRanges[rowIndex] = invalid then
 			m.rowsRenderedNodesRanges[rowIndex] = { "start": -1, "end": -1 }
 		end if
 
-		m.gridVerticalScroll.appendChild(rowNode)
+		m.verticalScroll.appendChild(rowNode)
 		rowIndex++
 	end for
 
@@ -1477,7 +1477,7 @@ end sub
 ' Navigate to a specific row and item index
 ' Returns true if navigation was successful, false if not (out of bounds or no composition loaded)
 function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer, animate as Boolean) as Boolean
-	rowContent = m.gridContent[rowIndex]
+	rowContent = m.content[rowIndex]
 	if rowContent = invalid then
 		print "No content for row at index" rowIndex
 		return false
@@ -1533,14 +1533,14 @@ end function
 
 function animateToRow(rowIndex as Integer, animate as Boolean)
 	currentRowHeaderHeight = 0
-	header = m.gridRowHeaderNodes[rowIndex]
+	header = m.rowHeaderNodes[rowIndex]
 	if header <> invalid then
 		currentRowHeaderHeight = header.height
 	end if
 
 	m.focusFeedbackTranslationYAnimateTo = currentRowHeaderHeight + m.focusYOffset
 
-	m.gridVerticalScrollTranslationYAnimateTo = -m.gridRowNodes[rowIndex].translation[1] + m.focusYOffset
+	m.verticalScrollTranslationYAnimateTo = -m.rowNodes[rowIndex].translation[1] + m.focusYOffset
 
 	if animate AND m.disableAnimation <> true then
 	conditionallyStartAnimationTimer()
@@ -1586,7 +1586,7 @@ end function
 
 function navigateUp()
 	' See if we have a focusable header that we need to switch focus to
-	headerNode = m.gridRowHeaderNodes[m.currentRowIndex]
+	headerNode = m.rowHeaderNodes[m.currentRowIndex]
 	if headerNode <> invalid AND headerNode.focusable = true AND headerNode.isInFocusChain() = false then
 		focusHeader(headerNode)
 		return true
@@ -1598,7 +1598,7 @@ end function
 
 
 function isHeaderFocused() as Boolean
-	headerNode = m.gridRowHeaderNodes[m.currentRowIndex]
+	headerNode = m.rowHeaderNodes[m.currentRowIndex]
 	if headerNode <> invalid AND headerNode.isInFocusChain() = true then
 		return true
 	end if
@@ -1614,7 +1614,7 @@ function navigateDown()
 		return navigateToLastFocusedRowItem(m.currentRowIndex)
 	end if
 
-	nextRowHeaderNode = m.gridRowHeaderNodes[m.currentRowIndex + 1]
+	nextRowHeaderNode = m.rowHeaderNodes[m.currentRowIndex + 1]
 	if nextRowHeaderNode <> invalid AND nextRowHeaderNode.focusable = true then
 		' We need to move focus down to the next row and animate to it
 		m.currentRowIndex = m.currentRowIndex + 1
@@ -1637,7 +1637,7 @@ sub focusHeader(headerNode as Object)
 
 	m.top.setRef("focusedHeaderInfo", {
 		"rowIndex": m.currentRowIndex
-		"rowContent": m.gridContent[m.currentRowIndex]
+		"rowContent": m.content[m.currentRowIndex]
 	})
 	m.top.focusedHeaderInfoChanged = true
 end sub
@@ -1698,7 +1698,7 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
 	else if key = "OK" then
 		if isHeaderFocused() then
 			rowIndex = m.currentRowIndex
-			rowContent = m.gridContent[rowIndex]
+			rowContent = m.content[rowIndex]
 			m.top.setRef("selectedHeaderInfo", {
 				"rowIndex": rowIndex
 				"rowContent": rowContent

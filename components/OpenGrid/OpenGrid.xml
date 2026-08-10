@@ -46,7 +46,7 @@
 		<field id="renderedRowsRef" type="assocarray" />
 	</interface>
 	<children>
-		<Group id="gridVerticalScroll" />
+		<Group id="verticalScroll" />
 		<Group id="focusFeedback" visible="false">
 			<Poster id="focusFeedbackPoster" />
 		</Group>
