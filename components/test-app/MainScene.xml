@@ -4,7 +4,7 @@
 	<children>
 		<OpenGrid
 			id="grid"
-			focusXOffset="400"
+			focusXOffset="90"
 			focusYOffset="90"
 			focusFeedbackExtension="[6,6]"
 			focusBitmapUri="pkg:/images/focus-feedback-{resolution}.9.png"

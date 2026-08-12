@@ -50,6 +50,19 @@ sub init()
 
 	m.availableRecycledNodes = {}
 
+	' Key used to store OpenGrid-managed per-row pagination metadata directly on each row config
+	' (resolved id, isAllRowContentLoaded, and the contentRequested in-flight guard)
+	m.rowMetadataKey = "OPEN_GRID_ROW_METADATA"
+
+	' Grid-level guard to avoid re-requesting more rows on every navigation near the bottom.
+	' Reset to false whenever new rows are supplied.
+	m.rowsContentRequested = false
+
+	' Grid-level flag indicating there are no more rows to load. When true OpenGrid stops requesting
+	' more rows. Derived from each envelope's isAllRowsLoaded, which defaults to true when omitted so a
+	' client that never opts in to row pagination won't be asked for more rows.
+	m.isAllRowsLoaded = true
+
 	' bs:disable-next-line 1129
 	m.renderThreadQueue = createObject("roRenderThreadQueue")
 	contentQueueId = "OGContentQueueId:" + createObject("roDeviceInfo").getRandomUUID()
@@ -81,6 +94,8 @@ sub init()
 	m.top.observeFieldScoped("focusFootprintBitmapUri", "updateFocusFeedbackState")
 	m.top.observeFieldScoped("focusFootprintBlendColor", "updateFocusFeedbackState")
 	m.top.observeFieldScoped("focusFeedbackExtension", "onFocusFeedbackExtensionChanged")
+	m.top.observeFieldScoped("rowItemContentNeededThreshold", "onRowItemContentNeededThresholdChanged")
+	m.top.observeFieldScoped("rowContentNeededThreshold", "onRowContentNeededThresholdChanged")
 
 	m.focusFeedbackPoster.observeFieldScoped("bitmapMargins", "onFocusFeedbackPosterBitmapMarginsChanged")
 
@@ -110,6 +125,11 @@ sub init()
 
 	m.needsVerticalTranslationUpdate = false
 
+	' Seed the cached pagination thresholds from their current field values. These are kept up to date
+	' via onRowItemContentNeededThresholdChanged / onRowContentNeededThresholdChanged. See OpenGrid.xml.
+	m.rowItemContentNeededThreshold = m.top.rowItemContentNeededThreshold
+	m.rowContentNeededThreshold = m.top.rowContentNeededThreshold
+
 	' How far the focus feedback extends past the content on each axis. Defaults to the poster's
 	' bitmapMargins but can be overridden via m.top.focusFeedbackExtension (see onFocusFeedbackPosterBitmapMarginsChanged)
 	m.focusFeedbackWidthExtension = 0
@@ -130,6 +150,16 @@ end sub
 
 sub onDisableAnimationChanged(msg)
 	m.disableAnimation = msg.getData()
+end sub
+
+
+sub onRowItemContentNeededThresholdChanged(msg)
+	m.rowItemContentNeededThreshold = msg.getData()
+end sub
+
+
+sub onRowContentNeededThresholdChanged(msg)
+	m.rowContentNeededThreshold = msg.getData()
 end sub
 
 
@@ -294,7 +324,7 @@ sub createOnscreenNodes(focusedRowIndex as Integer, focusedRowItemIndex as Integ
             headerHeight = 0
         else
             headerHeight = rowHeaderNode.height
-	end if
+        end if
 
         rowItemContainerNode = m.rowItemsContainerNodes[currentRowIndex]
         heightRendered += rowItemContainerNode.yOffset + headerHeight
@@ -978,8 +1008,8 @@ sub onAnimationTimerFired()
 		changeAmount = 100000
 		m.disableAnimation = false
 	else
-	timeElapsed = m.animationTickTimeSpan.totalMicroseconds()
-	changeAmount = m.animationRate * timeElapsed
+		timeElapsed = m.animationTickTimeSpan.totalMicroseconds()
+		changeAmount = m.animationRate * timeElapsed
 	end if
 
 
@@ -1433,45 +1463,213 @@ sub updateRowItemTranslations(rowIndex as Integer)
 end sub
 
 
-sub onContentSuppliedMessageReceived(rows, msgInfo)
-	m.verticalScroll.removeChildren(m.verticalScroll.getChildren(-1, 0))
-	m.content = []
+' Receives content supplied by the app through the render thread queue.
+' The payload is an envelope AA of the shape:
+'   {
+'     "rowsStartIndex": <int, optional>   ' index at which the message's new rows are placed (append/insert)
+'     "isAllRowsLoaded": <bool, optional> ' defaults to true when omitted; set false to have OpenGrid request more rows
+'     "rows": [ rowConfig, ... ]          ' a full list, new rows, and/or per-row item updates
+'   }
+' How each rowConfig is handled depends on the keys it carries and the envelope:
+'   - "startIndex" present -> item update: its items are spliced into an existing row (matched by "id",
+'                             falling back to "rowIndex") starting at startIndex.
+'   - no "startIndex"      -> a new row. It is placed at the next slot starting from the envelope's
+'                             rowsStartIndex (or appended to the end when rowsStartIndex is absent).
+' Because item updates and new rows are handled independently, a single message can mix both.
+' When the envelope has no rowsStartIndex and none of the rows carry a startIndex, the message is a
+' bare full list which is treated as a replacement: existing content is torn down and rebuilt.
+sub onContentSuppliedMessageReceived(content, msgInfo)
+	if content = invalid then
+		conditionallyThrow("Content supplied was invalid")
+		return
+	end if
 
-	' TODO rewrite to support subsequent content updates instead of just initial load
-	previousRowIndex = -1
-	rowIndex = 0
+	rows = content.rows
+	if rows = invalid then
+		rows = []
+	end if
+
+	rowsStartIndex = content.rowsStartIndex
+
+	' A bare list (no rowsStartIndex and no per-row item updates) is a full replacement
+	isReplacement = (rowsStartIndex = invalid AND containsNoItemUpdates(rows))
+	if isReplacement then
+		tearDownContent()
+	end if
+
+	wasEmpty = isReplacement OR (m.content.count() = 0)
+
+	' Running index used to place new rows. Starts from the envelope's rowsStartIndex, or the end of
+	' the current content when not provided (or 0 for a replacement, since content was just cleared).
+	if rowsStartIndex <> invalid then
+		nextNewRowIndex = rowsStartIndex
+	else
+		nextNewRowIndex = m.content.count()
+	end if
+
 	for each rowConfig in rows
-		' TODO need to build this out more
-		m.content[rowIndex] = rowConfig
-		' We use the row index as the way to know if we are making a new row or updating an existing one
-		' rowIndex = rowConfig.rowIndex
-		' if rowIndex <> invalid then
-		' 	rowNode = m.top.getChild(rowIndex)
-
-		' 	previousRowIndex = rowIndex
-		' 	isUpdate = true
-		' else
-		rowNode = createObject("roSGNode", "Group")
-		m.lastFocusedItemIndexByRow[rowIndex] = 0
-
-		previousRowIndex = previousRowIndex + 1
-		rowIndex = previousRowIndex
-		' isUpdate = false
-		' end if
-
-		m.rowNodes[rowIndex] = rowNode
-
-		if m.rowsRenderedNodesRanges[rowIndex] = invalid then
-			m.rowsRenderedNodesRanges[rowIndex] = { "start": -1, "end": -1 }
+		if rowConfig.startIndex <> invalid then
+			applyRowUpdate(rowConfig)
+		else
+			ingestRowConfig(rowConfig, nextNewRowIndex)
+			nextNewRowIndex++
 		end if
-
-		m.verticalScroll.appendChild(rowNode)
-		rowIndex++
 	end for
 
-	navigateToRowItem(0, 0, false)
-	m.focusFeedback.visible = true
+	' New content arrived so allow future row-item requests. isAllRowsLoaded defaults to true when the
+	' envelope omits it, so a client that never opts in to row pagination won't be asked for more rows.
+	m.rowsContentRequested = false
+	isAllRowsLoaded = content.isAllRowsLoaded
+	if isAllRowsLoaded = invalid then
+		isAllRowsLoaded = true
+	end if
+	m.isAllRowsLoaded = isAllRowsLoaded
+
+	if wasEmpty AND m.content.count() > 0 then
+		' Initial load / replacement: focus the first item and reveal the focus feedback
+		navigateToRowItem(0, 0, false)
+		m.focusFeedback.visible = true
+	else
+		' Render anything newly available
+		m.offscreenNodesTimer.control = "start"
+	end if
 end sub
+
+
+' Returns true when none of the supplied rows carry a startIndex (item update), meaning the message is
+' purely a list of rows rather than containing per-row item updates.
+function containsNoItemUpdates(rows as Object) as Boolean
+	for each rowConfig in rows
+		if rowConfig.startIndex <> invalid then
+			return false
+		end if
+	end for
+
+	return true
+end function
+
+
+' Tears down all existing rows and rendering state so content can be rebuilt from scratch.
+sub tearDownContent()
+	m.verticalScroll.removeChildren(m.verticalScroll.getChildren(-1, 0))
+	m.content = []
+	m.renderedRows = {}
+	m.top.setRef("renderedRowsRef", m.renderedRows)
+	m.rowNodes = []
+	m.rowHeaderNodes = []
+	m.rowItemsContainerNodes = []
+	m.rowsRenderedNodesRanges = []
+	m.lastFocusedItemIndexByRow = []
+	m.availableRecycledNodes = {}
+	m.rowsContentRequested = false
+	m.isAllRowsLoaded = true
+end sub
+
+
+' Sets up all the bookkeeping (row node, metadata, ranges) for a single row config at rowIndex.
+sub ingestRowConfig(rowConfig as Object, rowIndex as Integer)
+	m.content[rowIndex] = rowConfig
+	initRowMetadata(rowConfig)
+
+	if m.rowNodes[rowIndex] = invalid then
+		rowNode = createObject("roSGNode", "Group")
+		m.rowNodes[rowIndex] = rowNode
+		m.verticalScroll.appendChild(rowNode)
+	end if
+
+	if m.lastFocusedItemIndexByRow[rowIndex] = invalid then
+		m.lastFocusedItemIndexByRow[rowIndex] = 0
+	end if
+
+	if m.rowsRenderedNodesRanges[rowIndex] = invalid then
+		m.rowsRenderedNodesRanges[rowIndex] = { "start": -1, "end": -1 }
+	end if
+end sub
+
+
+' Initializes OpenGrid-managed pagination metadata on a row config. Assigns an id (using the
+' client-supplied id when present, otherwise a generated UUID) and defaults isAllRowContentLoaded to
+' true when the client does not supply it so we don't keep requesting content nobody is listening for.
+sub initRowMetadata(rowConfig as Object)
+	metadata = rowConfig[m.rowMetadataKey]
+	if metadata <> invalid then
+		return
+	end if
+
+	if rowConfig.id <> invalid then
+		rowId = rowConfig.id
+	else
+		rowId = createObject("roDeviceInfo").getRandomUUID()
+	end if
+
+	isAllRowContentLoaded = rowConfig.isAllRowContentLoaded
+	if isAllRowContentLoaded = invalid then
+		isAllRowContentLoaded = true
+	end if
+
+	rowConfig[m.rowMetadataKey] = {
+		"id": rowId
+		"isAllRowContentLoaded": isAllRowContentLoaded
+		"contentRequested": false
+	}
+end sub
+
+
+' Applies a partial per-row item update (append or replace) matched by id, falling back to startIndex/index.
+sub applyRowUpdate(rowConfig as Object)
+	startIndex = rowConfig.startIndex
+	if startIndex = invalid then
+		conditionallyThrow("Row update missing startIndex")
+		return
+	end if
+
+	rowIndex = findRowIndexForUpdate(rowConfig)
+	if rowIndex = -1 then
+		conditionallyThrow("Could not match row update to an existing row")
+		return
+	end if
+
+	existingRowConfig = m.content[rowIndex]
+	metadata = existingRowConfig[m.rowMetadataKey]
+
+	newItems = rowConfig.items
+	if newItems <> invalid then
+		items = existingRowConfig.items
+		for i = 0 to newItems.count() - 1
+			items[startIndex + i] = newItems[i]
+		end for
+	end if
+
+	' Update the loaded flag if the response provides one and clear the in-flight guard
+	if rowConfig.isAllRowContentLoaded <> invalid then
+		metadata.isAllRowContentLoaded = rowConfig.isAllRowContentLoaded
+	end if
+	metadata.contentRequested = false
+end sub
+
+
+' Finds the index of the row that a partial update targets, matching by id when present and falling
+' back to the row's index. Returns -1 when no match is found.
+function findRowIndexForUpdate(rowConfig as Object) as Integer
+	rowId = rowConfig.id
+	if rowId <> invalid then
+		for i = 0 to m.content.count() - 1
+			existingRowConfig = m.content[i]
+			metadata = existingRowConfig[m.rowMetadataKey]
+			if metadata <> invalid AND metadata.id = rowId then
+				return i
+			end if
+		end for
+		return -1
+	end if
+
+	rowIndex = rowConfig.rowIndex
+	if rowIndex <> invalid AND rowIndex >= 0 AND rowIndex < m.content.count() then
+		return rowIndex
+	end if
+
+	return -1
+end function
 
 
 ' Navigate to a specific row and item index
@@ -1525,9 +1723,76 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer, animate
 	})
 	m.top.focusedRowItemInfoChanged = true
 
+	' Check if navigating here means we are close enough to the end of content to request more
+	requestContentIfNeeded(rowIndex, rowItemIndex)
+
 	' Stop offscreen timer as we know we are about to animate
 	m.offscreenNodesTimer.control = "stop"
 	return true
+end function
+
+
+' Centralized pagination check. Builds a single contentNeeded envelope describing any content that is
+' needed based on the current focus position (more items for the focused row and/or more rows) and
+' assigns it once so the app can fetch and supply it back through contentQueueId.
+sub requestContentIfNeeded(rowIndex as Integer, rowItemIndex as Integer)
+	requestRows = []
+
+	' More items for the focused row
+	rowRequest = checkRowContentNeeded(rowIndex, rowItemIndex)
+	if rowRequest <> invalid then
+		requestRows.push(rowRequest)
+	end if
+
+	' More rows for the grid
+	rowsStartIndex = invalid
+	if m.isAllRowsLoaded = false AND m.rowsContentRequested = false AND rowIndex >= m.content.count() - m.rowContentNeededThreshold then
+		rowsStartIndex = m.content.count()
+		m.rowsContentRequested = true
+	end if
+
+	if requestRows.isEmpty() AND rowsStartIndex = invalid then
+		return
+	end if
+
+	envelope = { "rows": requestRows }
+	if rowsStartIndex <> invalid then
+		envelope.rowsStartIndex = rowsStartIndex
+	end if
+
+	m.top.contentNeeded = envelope
+end sub
+
+
+' Returns a minimal row request { "id": <string>, "startIndex": <int> } when the focused item is close
+' enough to the end of the row's items to warrant loading more, or invalid otherwise. Guarded by the
+' row's isAllContentLoaded flag and its contentRequested in-flight flag (which this sets when emitting).
+function checkRowContentNeeded(rowIndex as Integer, rowItemIndex as Integer) as Object
+	rowConfig = m.content[rowIndex]
+	if rowConfig = invalid then
+		return invalid
+	end if
+
+	metadata = rowConfig[m.rowMetadataKey]
+	if metadata = invalid then
+		return invalid
+	end if
+
+	if metadata.isAllRowContentLoaded = true OR metadata.contentRequested = true then
+		return invalid
+	end if
+
+	itemCount = rowConfig.items.count()
+	if rowItemIndex < itemCount - m.rowItemContentNeededThreshold then
+		return invalid
+	end if
+
+	metadata.contentRequested = true
+
+	return {
+		"id": metadata.id
+		"startIndex": itemCount
+	}
 end function
 
 
@@ -1543,7 +1808,7 @@ function animateToRow(rowIndex as Integer, animate as Boolean)
 	m.verticalScrollTranslationYAnimateTo = -m.rowNodes[rowIndex].translation[1] + m.focusYOffset
 
 	if animate AND m.disableAnimation <> true then
-	conditionallyStartAnimationTimer()
+		conditionallyStartAnimationTimer()
 	else
 		tempDisableAnimation = m.disableAnimation
 		m.disableAnimation = true

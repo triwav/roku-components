@@ -6,6 +6,6 @@ end sub
 
 
 sub onContentUpdatedChanged(msg)
-	m.content = m.top.getRef("content")
-	m.label.text = m.content.title
+	content = m.top.getRef("content")
+	m.label.text = content.header.title
 end sub

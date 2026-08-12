@@ -2,6 +2,12 @@ sub init()
 	m.grid = m.top.findNode("grid")
 	m.grid.setFocus(true)
 
+	m.renderThreadQueue = createObject("roRenderThreadQueue")
+
+	' OpenGrid sets contentNeeded when the user navigates close to the end of a row's items or the
+	' end of the rows. We fetch and supply the requested content back through contentQueueId.
+	m.grid.observeField("contentNeeded", "onContentNeeded")
+
 	' Have to delay load probably due to weird main bug
 	m.timer = createObject("roSGNode", "Timer")
 	m.timer.duration = 0.1
@@ -187,6 +193,110 @@ sub addGridContent()
 		end if
 	end for
 
-	m.renderThreadQueue = createObject("roRenderThreadQueue")
-	m.renderThreadQueue.postMessage(m.grid.contentQueueId, rows)
+	' Give each row a stable id and mark it as having more content available so OpenGrid will request
+	' more items as the user navigates toward the end of the row.
+	idx = 0
+	for each row in rows
+		row.id = "row-" + idx.toStr()
+		row.isAllRowContentLoaded = false
+		idx = idx + 1
+	end for
+
+	m.renderThreadQueue.postMessage(m.grid.contentQueueId, {
+		"isAllRowsLoaded": false
+		"rows": rows
+	})
 end sub
+
+
+' Handles OpenGrid's request for more content. contentNeeded is an envelope AA:
+'   {
+'     "rowsStartIndex": <int, optional> ' more rows are needed starting at this index
+'     "rows": [ { "id": <string>, "startIndex": <int> }, ... ] ' more items are needed for these rows
+'   }
+' Respond with more content through contentQueueId. Include a row's "isAllRowContentLoaded" once it has
+' no more items, and the envelope's "isAllRowsLoaded" once there are no more rows.
+sub onContentNeeded(msg)
+	contentNeeded = msg.getData()
+	if contentNeeded = invalid then
+		return
+	end if
+
+	responseRows = []
+
+	' Supply more items for any rows that requested them
+	requestedRows = contentNeeded.rows
+	if requestedRows <> invalid then
+		for each rowRequest in requestedRows
+			responseRows.push(buildMoreItems(rowRequest.id, rowRequest.startIndex))
+		end for
+	end if
+
+	' Supply more rows if requested
+	responseEnvelope = {}
+	rowsStartIndex = contentNeeded.rowsStartIndex
+	if rowsStartIndex <> invalid then
+		newRowCount = 5
+		for i = 0 to newRowCount - 1
+			newRowIndex = rowsStartIndex + i
+			newRow = {
+				"id": "row-" + newRowIndex.toStr()
+				"componentName": "GridItemRenderer"
+				"isAllRowContentLoaded": false
+				"header": {
+					"componentName": "CustomRowHeader"
+					"title": "More Row " + newRowIndex.toStr()
+				}
+				"items": buildItems(newRowIndex, 0, 20)
+			}
+			responseRows.push(newRow)
+		end for
+
+		' Tell OpenGrid where these new rows should be placed
+		responseEnvelope.rowsStartIndex = rowsStartIndex
+
+		' Stop supplying rows once we have reached a total so the grid stops requesting more
+		if rowsStartIndex + newRowCount >= 40 then
+			responseEnvelope.isAllRowsLoaded = true
+		end if
+	end if
+
+	if responseRows.isEmpty() then
+		return
+	end if
+
+	responseEnvelope.rows = responseRows
+	m.renderThreadQueue.postMessage(m.grid.contentQueueId, responseEnvelope)
+end sub
+
+
+' Builds a partial row update supplying the next page of items for a row.
+function buildMoreItems(rowId as String, startIndex as Integer) as Object
+	pageSize = 20
+	nextStartIndex = startIndex + pageSize
+
+	' Stop supplying content after we have loaded a few pages so the grid stops requesting
+	isAllRowContentLoaded = (nextStartIndex >= 100)
+
+	return {
+		"id": rowId
+		"startIndex": startIndex
+		"isAllRowContentLoaded": isAllRowContentLoaded
+		"items": buildItems(0, startIndex, pageSize)
+	}
+end function
+
+
+' Generates placeholder items for a row.
+function buildItems(rowIndex as Integer, startIndex as Integer, count as Integer) as Object
+	items = []
+	for i = 0 to count - 1
+		itemIndex = startIndex + i
+		items.push({
+			"title": "Item " + itemIndex.toStr()
+			"imageUrl": "https://picsum.photos/seed/row" + rowIndex.toStr() + "item" + itemIndex.toStr()
+		})
+	end for
+
+	return items
+end function
