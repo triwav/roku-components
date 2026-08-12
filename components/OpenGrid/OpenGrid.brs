@@ -120,8 +120,10 @@ sub init()
 	' Includes the last rowFocusPercent values for each renderered row index. Used to avoid having to set fields when the value hasn't changed
 	m.rowFocusPercents = {}
 
-	' Includes the last focusPercent values for each renderered row item in the current row. Used to avoid having to set fields when the value hasn't changed
-	m.currentRowFocusPercents = {}
+	' Last focusPercent applied to each rendered row item, keyed [rowIndexStr][rowItemIndexStr] to mirror
+	' m.renderedRows. Used to avoid setting fields when the value hasn't changed. Entries are removed as
+	' nodes are recycled so a recreated node at the same index never inherits a stale value.
+	m.rowItemFocusPercents = {}
 
 	m.needsVerticalTranslationUpdate = false
 
@@ -587,6 +589,7 @@ sub recycleOffscreenNodes()
 			end for
 
 			renderedRows.delete(rowIndex)
+			m.rowItemFocusPercents.delete(rowIndex)
 			m.rowsRenderedNodesRanges[rowIndex.toInt()] = { "start": -1, "end": -1 }
 
 			continue for
@@ -663,6 +666,13 @@ sub recycleNode(rowIndex as String, rowItemIndex as String)
 	nodeTypeAvailableRecycledNodes.push(rowItemNode)
 
 	renderedRows[rowIndex].delete(rowItemIndex)
+
+	' Drop any cached focus percent for this node so a node later recreated at the same index does not
+	' inherit a stale value that would suppress its focusPercent/itemHasFocus update.
+	rowItemFocusPercents = m.rowItemFocusPercents[rowIndex.toStr()]
+	if rowItemFocusPercents <> invalid then
+		rowItemFocusPercents.delete(rowItemIndex.toStr())
+	end if
 
 	trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
 	rowContent = m.content[rowIndex.toInt()].items
@@ -1079,7 +1089,11 @@ sub onAnimationTimerFired()
 				focusedRowItem.translation = [newTranslationX, focusedRowItem.translation[1]]
 				m.rowsNeedingHorizontalTranslationUpdate[currentRowIndex.toStr()] = true
 			else
-				shouldUpdateFocusPercent = false
+				' The focused item needs no horizontal animation. We still run the item
+				' focus block so the focused item gets focusPercent/itemHasFocus applied. This covers the
+				' initial focus (nothing animates) and vertical-only navigation (row animates, item centered).
+				' The per-item cache below suppresses redundant field writes so this stays cheap.
+				shouldUpdateFocusPercent = true
 			end if
 		end if
 	end if
@@ -1204,6 +1218,11 @@ sub onAnimationTimerFired()
 
 			focusFieldUpdates = []
 
+			' Set when a row transitions out of being fully focused. Its previously focused item still
+			' has focusPercent/itemHasFocus set, and the current-row focus block below only processes the
+			' new focused row, so we reset this row's item focus state here.
+			rowLostFocus = false
+
 			if difference = 0 then
 				if previousRowFocusOffsetPercentage <> 1 then
 					' 	' Row was not fully focused before so need to update to fully focused
@@ -1249,6 +1268,7 @@ sub onAnimationTimerFired()
 					focusFieldUpdates.push(["rowFocusPercent", rowFocusPercent])
 					if previousRowFocusOffsetPercentage = 1 then
 						focusFieldUpdates.push(["rowHasFocus", false])
+						rowLostFocus = true
 					end if
 				end if
 			end if
@@ -1266,6 +1286,29 @@ sub onAnimationTimerFired()
 					end for
 				end for
 			end if
+
+			' The row is no longer fully focused, so no item in it should read as focused. Reset any
+			' item whose cached focusPercent is still non-zero (e.g. the item we just navigated away
+			' from) so it collapses. Clearing the cache to 0 also lets it re-fire when we return.
+			if rowLostFocus then
+				rowItemFocusPercents = m.rowItemFocusPercents[rowIndex]
+				if rowItemFocusPercents <> invalid then
+					for each itemIndexKey in rowItemFocusPercents
+						if rowItemFocusPercents[itemIndexKey] <> 0 then
+							previousItemFocusPercent = rowItemFocusPercents[itemIndexKey]
+							rowItemFocusPercents[itemIndexKey] = 0
+
+							rowItemNode = m.renderedRows[rowIndex][itemIndexKey]
+							if rowItemNode <> invalid then
+								conditionallySetField(rowItemNode, "focusPercent", 0)
+								if previousItemFocusPercent = 1 then
+									conditionallySetField(rowItemNode, "itemHasFocus", false)
+								end if
+							end if
+						end if
+					end for
+				end if
+			end if
 		end for
 		' print "calculate rowFocusPercent and rowHasFocus took:" ; t.totalMicroseconds() / 1000000
 	end if
@@ -1274,6 +1317,12 @@ sub onAnimationTimerFired()
 		' t = createObject("roTimespan")
 		' Update focus percent values for current row
 		rowItems = m.renderedRows[currentRowIndex.toStr()]
+
+		rowItemFocusPercents = m.rowItemFocusPercents[currentRowIndex.toStr()]
+		if rowItemFocusPercents = invalid then
+			rowItemFocusPercents = {}
+			m.rowItemFocusPercents[currentRowIndex.toStr()] = rowItemFocusPercents
+		end if
 
 		for each rowItemIndex in rowItems
 			rowItemNode = rowItems[rowItemIndex]
@@ -1287,11 +1336,10 @@ sub onAnimationTimerFired()
 				focusPercent = 2
 			end if
 
-			' TODO need to handle when we create nodes as well
-			previousFocusPercent = m.currentRowFocusPercents[rowItemIndex]
+			previousFocusPercent = rowItemFocusPercents[rowItemIndex]
 			if previousFocusPercent <> focusPercent then
 				' print "Row " currentRowIndex " item " rowItemIndex " horizontal translation difference from focus: " difference " focusPercent: " focusPercent
-				m.currentRowFocusPercents[rowItemIndex] = focusPercent
+				rowItemFocusPercents[rowItemIndex] = focusPercent
 				conditionallySetField(rowItemNode, "focusPercent", focusPercent)
 
 				if focusPercent = 1 then
@@ -1561,6 +1609,8 @@ sub tearDownContent()
 	m.rowsRenderedNodesRanges = []
 	m.lastFocusedItemIndexByRow = []
 	m.availableRecycledNodes = {}
+	m.rowFocusPercents = {}
+	m.rowItemFocusPercents = {}
 	m.rowsContentRequested = false
 	m.isAllRowsLoaded = true
 end sub
@@ -1950,6 +2000,13 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
 
 	if press = false then
 		return false
+	end if
+
+	if key = "replay" then
+		rowIndex = Rnd(m.content.count()) - 1
+		itemIndex = Rnd(m.content[rowIndex].items.count()) - 1
+		print "jumping to random row " rowIndex " item " itemIndex
+		m.top.animateToRowItem = [rowIndex, itemIndex]
 	end if
 
 	if key = "up" then
