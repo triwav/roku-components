@@ -32,7 +32,6 @@ sub init()
 
 	' The actual content for the grid, an array of row configs where each row config has an array of item configs
 	m.content = []
-	' IMPROVEMENT perhaps remove grid prefix from these variable names to make it less verbose
 
 	' The nodes for each row that are currently in the grid, indexed by row index
 	m.rowNodes = []
@@ -677,8 +676,11 @@ sub recycleNode(rowIndex as String, rowItemIndex as String)
 	trackingKey = "row" + rowIndex.toStr() + "item" + rowItemIndex.toStr()
 	rowContent = m.content[rowIndex.toInt()].items
 	rowItemContent = rowContent[rowItemIndex.toInt()]
-	rowItemContent[m.contentAssignedKey].delete(trackingKey)
 
+	contentAssignedTracking = rowItemContent[m.contentAssignedKey]
+	if contentAssignedTracking <> invalid then
+		contentAssignedTracking.delete(trackingKey)
+	end if
 	rowItemNode.content = invalid
 
 	rowItemNode.unobserveFieldScoped("xOffset")
