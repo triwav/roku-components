@@ -4,24 +4,24 @@
 
 	<interface>
 		<!-- Fired by OpenGrid when it needs more content. Observe this field to know when to fetch and
-		     supply more content back through contentQueueId. The value is an envelope AA of the same shape
-		     used to supply content:
-		       {
-		         "rowsStartIndex": <int, optional> ' present when more rows are needed, starting at this index
-		         "rows": [ rowConfig, ... ]        ' minimal row requests, each { "id": <string>, "startIndex": <int> }
-		       }
-		     A row request with a startIndex indicates more items are needed for that row starting at startIndex.
-		     Match requests back using the row's "id". When supplying content back, a row may include
-		     "isAllRowContentLoaded" to indicate that row has no more items, and the envelope may include
-		     "isAllRowsLoaded" to indicate there are no more rows to load. -->
+			 supply more content back through contentQueueId. The value is an envelope AA of the same shape
+			 used to supply content:
+			   {
+				 "rowsStartIndex": <int, optional> ' present when more rows are needed, starting at this index
+				 "rows": [ rowConfig, ... ]		' minimal row requests, each { "id": <string>, "startIndex": <int> }
+			   }
+			 A row request with a startIndex indicates more items are needed for that row starting at startIndex.
+			 Match requests back using the row's "id". When supplying content back, a row may include
+			 "isAllRowContentLoaded" to indicate that row has no more items, and the envelope may include
+			 "isAllRowsLoaded" to indicate there are no more rows to load. -->
 		<field id="contentNeeded" type="assocarray" />
 
 		<!-- How close (in items) the focused item must get to the end of a row's items before OpenGrid
-		     requests more items for that row via contentNeeded. -->
+			 requests more items for that row via contentNeeded. -->
 		<field id="rowItemContentNeededThreshold" type="integer" value="5" />
 
 		<!-- How close (in rows) the focused row must get to the last row before OpenGrid requests more
-		     rows via contentNeeded. -->
+			 rows via contentNeeded. -->
 		<field id="rowContentNeededThreshold" type="integer" value="3" />
 
 		<field id="contentQueueId" type="string" />
@@ -39,7 +39,7 @@
 		<field id="focusFootprintBlendColor" type="color" />
 
 		<!-- Optional manual override for how far the focus feedback extends past the content on each axis.
-		     When set, focusFeedbackExtension[0] (width) / [1] (height) are used instead of the poster's bitmapMargins. -->
+			 When set, focusFeedbackExtension[0] (width) / [1] (height) are used instead of the poster's bitmapMargins. -->
 		<field id="focusFeedbackExtension" type="array" />
 
 		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->

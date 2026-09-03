@@ -101,7 +101,7 @@ sub init()
 	m.animationRate = 1800 / 1000000 ' Pixels per microsecond
 
 	m.animationTimer = createObject("roSGNode", "Timer")
-	m.animationTimer.duration = 0.001
+	m.animationTimer.duration = 1/60
 	m.animationTimer.observeField("fire", "onAnimationTimerFired")
 	m.animationTickTimeSpan = createObject("roTimespan")
 
@@ -172,6 +172,8 @@ end sub
 
 sub onJumpToRowItemChanged(msg)
 	data = msg.getData()
+	if data = invalid OR data.count() <> 2 then return
+
 	navigateToRowItem(data[0], data[1], false)
 end sub
 
@@ -249,21 +251,27 @@ end sub
 
 sub onFocusedChildChanged()
 	updatedFocus = false
-	if m.top.hasFocus() = true then
-		m.gridHasFocus = true
-		updatedFocus = true
 
-		if m.currentRowHeaderIsFocused then
-			focusHeader(m.rowHeaderNodes[m.currentRowIndex])
-		else
-			focusCurrentRowItem()
+	isInFocusChain = m.top.isInFocusChain()
+	if isInFocusChain then
+		if m.gridHasFocus = false then
+			updatedFocus = true
+
+			if m.currentRowHeaderIsFocused then
+				focusHeader(m.rowHeaderNodes[m.currentRowIndex])
+			else
+				focusCurrentRowItem()
+			end if
 		end if
-	else if m.top.isInFocusChain() = false then
-		m.gridHasFocus = false
-		updatedFocus = true
+	else
+		if m.gridHasFocus = true then
+			updatedFocus = true
+		end if
 	end if
 
 	if updatedFocus = true then
+		m.gridHasFocus = isInFocusChain
+
 		updateFocusFeedbackState()
 		for each rowIndex in m.renderedRows
 			for each itemIndex in m.renderedRows[rowIndex]
@@ -1778,8 +1786,11 @@ function navigateToRowItem(rowIndex as Integer, rowItemIndex as Integer, animate
 	' Check if navigating here means we are close enough to the end of content to request more
 	requestContentIfNeeded(rowIndex, rowItemIndex)
 
-	' Stop offscreen timer as we know we are about to animate
-	m.offscreenNodesTimer.control = "stop"
+	' Stop offscreen timer if we are about to animate
+	if animate = true then
+		m.offscreenNodesTimer.control = "stop"
+	end if
+
 	return true
 end function
 
@@ -2002,13 +2013,6 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
 
 	if press = false then
 		return false
-	end if
-
-	if key = "replay" then
-		rowIndex = Rnd(m.content.count()) - 1
-		itemIndex = Rnd(m.content[rowIndex].items.count()) - 1
-		print "jumping to random row " rowIndex " item " itemIndex
-		m.top.animateToRowItem = [rowIndex, itemIndex]
 	end if
 
 	if key = "up" then
