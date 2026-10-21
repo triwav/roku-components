@@ -32,6 +32,13 @@ sub init()
 
 	' The actual content for the grid, an array of row configs where each row config has an array of item configs
 	m.content = []
+	' Publish content by reference so wrappers can read it directly with getRef, no copy. Republished
+	' whenever m.content is reassigned (see tearDownContent).
+
+	m.contentRef = {
+		"rows": m.content
+	}
+	m.top.setRef("contentRef", m.contentRef)
 
 	' The nodes for each row that are currently in the grid, indexed by row index
 	m.rowNodes = []
@@ -1338,12 +1345,17 @@ sub onAnimationTimerFired()
 			rowItemNode = rowItems[rowItemIndex]
 			difference = calculateHorizontalTranslationDifference(rowItemNode, false)
 
-			' Possibly revisit in the future. Using current rowItemIndex for focus percent calculations makes things simpler but focus percent will be different than the actual with different size items
-			focusPercent = 1 + (difference / rowItemNode.xOffset)
-			if focusPercent < 0 then
-				focusPercent = 0
-			else if focusPercent > 2 then
-				focusPercent = 2
+			focusPercent = 0
+
+			xOffset = rowItemNode.xOffset
+			if xOffset <> 0 then
+				' Possibly revisit in the future. Using current rowItemIndex for focus percent calculations makes things simpler but focus percent will be different than the actual with different size items
+				focusPercent = 1 + (difference / xOffset)
+				if focusPercent < 0 then
+					focusPercent = 0
+				else if focusPercent > 2 then
+					focusPercent = 2
+				end if
 			end if
 
 			previousFocusPercent = rowItemFocusPercents[rowItemIndex]
@@ -1611,6 +1623,10 @@ end function
 sub tearDownContent()
 	m.verticalScroll.removeChildren(m.verticalScroll.getChildren(-1, 0))
 	m.content = []
+	m.contentRef = {
+		"rows": m.content
+	}
+	m.top.setRef("contentRef", m.contentRef)
 	m.renderedRows = {}
 	m.top.setRef("renderedRowsRef", m.renderedRows)
 	m.rowNodes = []

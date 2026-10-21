@@ -62,6 +62,11 @@
 
 		<!-- Should we expose this?-->
 		<field id="renderedRowsRef" type="assocarray" />
+
+		<!-- The grid's current content by reference (via setRef): an array of row configs, each with an
+			 items array of item AAs. Lets a wrapper read the supplied content directly (gating, on-demand
+			 node resolution) with getRef, without copying. Do not observe. -->
+		<field id="contentRef" type="assocarray" />
 	</interface>
 	<children>
 		<Group id="verticalScroll" />
