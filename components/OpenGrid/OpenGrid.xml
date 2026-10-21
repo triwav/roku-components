@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="OpenGrid" extends="Group">
+	<script type="text/brightscript" uri="OpenGrid.brs" />
+
+	<interface>
+		<!-- Fired by OpenGrid when it needs more content. Observe this field to know when to fetch and
+			 supply more content back through contentQueueId. The value is an envelope AA of the same shape
+			 used to supply content:
+			   {
+				 "rowsStartIndex": <int, optional> ' present when more rows are needed, starting at this index
+				 "rows": [ rowConfig, ... ]		' minimal row requests, each { "id": <string>, "startIndex": <int> }
+			   }
+			 A row request with a startIndex indicates more items are needed for that row starting at startIndex.
+			 Match requests back using the row's "id". When supplying content back, a row may include
+			 "isAllRowContentLoaded" to indicate that row has no more items, and the envelope may include
+			 "isAllRowsLoaded" to indicate there are no more rows to load. -->
+		<field id="contentNeeded" type="assocarray" />
+
+		<!-- How close (in items) the focused item must get to the end of a row's items before OpenGrid
+			 requests more items for that row via contentNeeded. -->
+		<field id="rowItemContentNeededThreshold" type="integer" value="5" />
+
+		<!-- How close (in rows) the focused row must get to the last row before OpenGrid requests more
+			 rows via contentNeeded. -->
+		<field id="rowContentNeededThreshold" type="integer" value="3" />
+
+		<field id="contentQueueId" type="string" />
+
+		<field id="disableAnimation" type="boolean" value="false" />
+		<field id="animateToRowItem" type="array" value="[0, 0]" />
+		<field id="jumpToRowItem" type="array" value="[0, 0]" />
+		<field id="width" type="integer" />
+		<field id="height" type="integer" />
+		<field id="focusXOffset" type="integer" />
+		<field id="focusYOffset" type="integer" />
+		<field id="focusBitmapUri" type="uri" />
+		<field id="focusBitmapBlendColor" type="color" />
+		<field id="focusFootprintBitmapUri" type="uri" />
+		<field id="focusFootprintBlendColor" type="color" />
+
+		<!-- Optional manual override for how far the focus feedback extends past the content on each axis.
+			 When set, focusFeedbackExtension[0] (width) / [1] (height) are used instead of the poster's bitmapMargins. -->
+		<field id="focusFeedbackExtension" type="array" />
+
+		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
+		<field id="focusedHeaderInfo" type="assocarray" />
+		<field id="focusedHeaderInfoChanged" type="boolean" alwaysNotify="true" />
+
+		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
+		<field id="selectedHeaderInfo" type="assocarray" />
+		<field id="selectedHeaderInfoChanged" type="boolean" alwaysNotify="true" />
+
+		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
+		<field id="focusedRowItemInfo" type="assocarray" />
+		<field id="focusedRowItemInfoChanged" type="boolean" alwaysNotify="true" />
+
+		<!-- Do not observe. Instead observe the boolean counterpart and use getRef instead -->
+		<field id="selectedRowItemInfo" type="assocarray" />
+		<field id="selectedRowItemInfoChanged" type="boolean" alwaysNotify="true" />
+
+		<field id="currFocusRow" type="float" />
+
+		<!-- Should we expose this?-->
+		<field id="renderedRowsRef" type="assocarray" />
+
+		<!-- The grid's current content by reference (via setRef): an array of row configs, each with an
+			 items array of item AAs. Lets a wrapper read the supplied content directly (gating, on-demand
+			 node resolution) with getRef, without copying. Do not observe. -->
+		<field id="contentRef" type="assocarray" />
+	</interface>
+	<children>
+		<Group id="verticalScroll" />
+		<Group id="focusFeedback" visible="false">
+			<Poster id="focusFeedbackPoster" />
+		</Group>
+	</children>
+</component>
