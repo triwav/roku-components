@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="GridItemRenderer" extends="Group">
+	<script type="text/brightscript" uri="GridItemRenderer.brs" />
+	<interface>
+		<!-- Input fields -->
+		<field id="content" type="assocarray" />
+		<field id="contentUpdated" type="boolean" alwaysNotify="true" />
+		<field id="rowIndex" type="integer" />
+		<field id="rowItemIndex" type="integer" />
+
+		<field id="gridHasFocus" type="boolean" />
+		<field id="rowHasFocus" type="boolean" />
+		<field id="itemHasFocus" type="boolean" />
+		<field id="focusPercent" type="float" />
+		<field id="rowFocusPercent" type="float" />
+
+		<!-- Output fields -->
+		<field id="width" type="float" alias="rect.width" />
+		<field id="height" type="float" />
+
+		<field id="xOffset" type="float" />
+		<field id="yOffset" type="float" />
+		<field id="animate" type="assocarray" />
+	</interface>
+
+	<children>
+		<LayoutGroup id="layout" itemSpacings="[0]">
+			<Poster id="poster" />
+			<Rectangle id="rect" height="30" color="#000000">
+				<Label id="label" translation="[0, 6]" />
+			</Rectangle>
+		</LayoutGroup>
+	</children>
+</component>

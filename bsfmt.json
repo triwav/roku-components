@@ -1,0 +1,23 @@
+{
+    "$schema": "https://raw.githubusercontent.com/rokucommunity/brighterscript-formatter/refs/heads/master/bsfmt.schema.json",
+    "compositeKeywords": "split",
+    "formatIndent": true,
+    "formatInteriorWhitespace": true,
+    "formatMultiLineObjectsAndArrays": true,
+    "formatSingleLineCommentType": "singlequote",
+    "indentSpaceCount": 2,
+    "indentStyle": "spaces",
+    "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true,
+    "insertSpaceBeforeFunctionParenthesis": false,
+    "insertSpaceBetweenAssociativeArrayLiteralKeyAndColon": false,
+    "insertSpaceBetweenEmptyCurlyBraces": false,
+    "keywordCase": "lower",
+    "keywordCaseOverride": {
+        "function": "title",
+        "endfunction": "title",
+        "and": "upper",
+        "or": "upper"
+    },
+    "removeTrailingWhiteSpace": true,
+    "typeCase": "lower"
+}
